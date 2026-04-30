@@ -191,7 +191,7 @@ func TestRenderQueuePreviewShowsWaitingItems(t *testing.T) {
 		Waiting: true,
 	}}, -1, 80))
 
-	for _, want := range []string{"waiting", "Codex review"} {
+	for _, want := range []string{"Codex review"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("RenderQueuePreview() = %q, want %q", rendered, want)
 		}

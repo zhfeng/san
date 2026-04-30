@@ -3,6 +3,7 @@ package conv
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yanmxa/gencode/internal/task/tracker"
 )
@@ -61,16 +62,25 @@ func TestRenderTrackerListShowsTaskStatus(t *testing.T) {
 func TestRenderTaskAnimatesInProgressItem(t *testing.T) {
 	task := &tracker.Task{ID: "1", Subject: "Fix auth module", Status: tracker.StatusInProgress}
 
-	onFrame := stripANSI(renderTask(task, 80, 2, "◐", nil))
-	offFrame := stripANSI(renderTask(task, 80, 2, "◓", nil))
+	var hasSolid, hasDim bool
+	for i := 0; i < 10; i++ {
+		frame := stripANSI(renderTask(task, 80, 2, nil))
+		if strings.Contains(frame, "●") {
+			hasSolid = true
+		}
+		if strings.Contains(frame, "◌") {
+			hasDim = true
+		}
+		if hasSolid && hasDim {
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
 
-	if onFrame == offFrame {
-		t.Fatalf("in-progress task should change across frames:\n%s", onFrame)
+	if !hasSolid {
+		t.Fatal("in-progress task should show solid active icon (●) at some point")
 	}
-	if !strings.Contains(onFrame, "●") {
-		t.Fatalf("on frame = %q, want solid active icon", onFrame)
-	}
-	if !strings.Contains(offFrame, "◌") {
-		t.Fatalf("off frame = %q, want dim active icon", offFrame)
+	if !hasDim {
+		t.Fatal("in-progress task should show dim active icon (◌) at some point")
 	}
 }
