@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.15.10] - 2026-05-01
+
+### Fixed
+
+- Fix `renderTask` test to match updated 4-parameter signature
+- Update `TestRenderQueuePreviewShowsWaitingItems` to align with queue preview design
+
 ## [v1.15.9] - 2026-05-01
 
 ### Fixed
