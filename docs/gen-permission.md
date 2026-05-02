@@ -302,3 +302,212 @@ Managed (enterprise) settings can lock the config:
 - **Compound Bash + allow rules.** Every subcommand must independently be allowed. A single allow rule covering one subcommand is not enough to allow the whole compound.
 - **MCP tool naming.** MCP tools use `mcp__<server>__<tool>`. Deny `MCP(mcp__puppeteer__*)` blocks the entire server.
 - **Symlinks.** Allow rules check both link and target; deny rules block if either matches.
+
+---
+
+## Implementation
+
+The same 8-step pipeline (above) runs in main loop and subagents. Code map:
+
+```
+internal/tool/perm/
+├── decision.go      Decision enum, Checker interface, mode-aligned built-in
+│                    checkers (Default / AcceptEdits / ReadOnly / PermitAll /
+│                    DenyAll), IsSafeTool, IsReadOnlyTool, IsEditTool,
+│                    PermissionFunc, AsPermissionFunc
+├── types.go         PermissionRequest, DiffMetadata, BashMetadata, ...
+└── diff.go          GenerateDiff, GeneratePreview
+
+internal/tool/permission.go   WithPermission decorator (wraps core.Tools with
+                              a PermissionFunc; safe tools bypass the check)
+
+internal/setting/permission.go
+├── HasPermissionToUseTool    main-loop gate — runs all 8 steps
+├── MatchAllowList            per-subcommand allow check for Bash; shared with
+│                             subagent
+├── MatchesToolPattern        any-subcommand match for deny / ask
+├── BypassImmuneReason        sensitive paths + destructive bash; shared
+└── checkHardBlocks           internal helper composing deny + bypass-immune
+                              + working-dir + ask
+
+internal/subagent/match.go
+├── ToolList.Matches          deny / ask (any-subcommand)
+└── ToolList.Allows           allow (every-subcommand, delegates to MatchAllowList)
+
+internal/subagent/executor.go
+├── modeChecker               PermissionMode → perm.Checker
+└── subagentPermissionFunc    runs steps 1-4 + Ask→Deny coercion; the result
+                              becomes the PermissionFunc passed into
+                              tool.WithPermission for the agent.
+```
+
+### Wiring
+
+Main loop:
+
+```
+Settings + SessionPermissions
+    ▼
+settings.HasPermissionToUseTool         8-step pipeline
+    ▼
+agent.PermissionBridge.PermissionFunc    Permit/Reject → return; Prompt →
+    ▼                                    cross goroutine to TUI dialog
+tool.WithPermission(tools, fn)
+    ▼
+core.Agent (Tools)
+```
+
+Subagent:
+
+```
+AgentConfig (mode, allow_tools, deny_tools)
+    ▼
+subagent.subagentPermissionFunc          steps 1-4 + Ask→Deny
+    ▼
+tool.WithPermission(tools, fn)
+    ▼
+core.Agent (Tools)
+```
+
+Both paths produce a `tool.PermissionFunc` that the same `WithPermission`
+decorator wraps around `core.Tools`. The agent itself has no knowledge of
+permission — the wrap is transparent.
+
+### Hook integration
+
+Hooks sit around the gate at the **app layer** (see [hook.md](hook.md)):
+
+```
+tool call arrives
+│
+│  ① PreToolUse           (sync)
+│     hook may return permissionDecision: allow / deny / ask
+│     hook may rewrite tool input via updatedInput
+│
+│  ② PermissionFunc       (the gate above)
+│     Permit  → execute
+│     Reject  → return error
+│     Prompt  → continue to ③
+│
+│  ③ PermissionRequest    (sync, only on Prompt)
+│     hook may decide on user's behalf, or update rules in-flight
+│     no hook decides → show TUI dialog
+│
+│  ④ PermissionDenied     (async, only on final Deny)
+│     hook may set retry: true to resume the assistant turn
+```
+
+`PreToolUse` runs **before** the gate — it can short-circuit the pipeline.
+`PermissionRequest` runs **only after** the gate returns Prompt — it can
+auto-approve before the user dialog. `PreToolUse` cannot return
+`updatedPermissions`; that is exclusive to `PermissionRequest`.
+
+---
+
+## Testing
+
+### Unit + integration
+
+```bash
+go test ./internal/setting/...      -v -run TestPermission
+go test ./internal/tool/perm/...    -v
+go test ./internal/subagent/...     -v -run 'Mode|Permission|Allow|Deny'
+go test ./tests/integration/permission/... -v
+```
+
+Key cases:
+
+```
+# Unified pipeline
+TestMatchRule                        rule pattern matching
+TestBuildRule                        rule string construction
+TestCheckPermission                  deny / allow / ask / mode interactions
+TestBypassPermissionsMode            bypass + bypass-immune still enforced
+TestDontAskMode                      Ask coerced to Deny
+TestDenyRulesPriorityOverSession     deny absolute
+TestSafeToolAllowlist                safe tools auto-allow
+TestIsDestructiveCommand             destructive pattern catch
+TestIsSensitivePath                  sensitive path catch
+TestCheckBashSecurity                injection / obfuscation
+TestBashSecurityBypassImmune         security checks always fire
+
+# Subagent gate (steps 1-4 + Ask→Deny coercion)
+TestExploreModeAllowsOnlyGitDiffBash         allow_tools per-subcommand
+TestDefaultModeRestrictsConfiguredBash       allow_tools whitelist
+TestDenyToolRulesMatchPatterns               deny_tools any-subcommand
+TestExploreModeFiltersMutatingToolSchemas    schema filter
+TestAcceptEditsModeFiltersApprovalOnlyToolSchemas
+TestBypassModeAllowsEverything
+TestNormalizePermissionModeDefaultsEmpty
+
+# Tool classification
+TestIsReadOnlyToolMatchesConfig
+TestIsSafeToolMatchesConfig
+```
+
+### Manual interactive (subagent, headless)
+
+`gen agent run --type <name> --prompt "..."` runs an AGENT.md fixture through
+the full subagent pipeline. Use it to verify allow / deny / mode end-to-end
+without a TUI.
+
+```bash
+mkdir -p .gen/agents
+cat > .gen/agents/test-perm.md <<'EOF'
+---
+name: test-perm
+description: Permission gate fixture
+mode: explore
+allow_tools:
+  - Read
+  - Bash(git diff*)
+  - Bash(git log*)
+deny_tools:
+  - Bash(git stash*)
+---
+You are a test fixture. Run exactly what the user asks. After each call output:
+  RESULT: <tool>(<short-args>) -> <ALLOWED|DENIED: reason>
+EOF
+
+# Allow path (matches Bash(git diff*))
+./bin/gen agent run --type test-perm --prompt 'Run bash: git diff --stat'
+#   → RESULT: Bash(git diff --stat) -> ALLOWED
+
+# Per-subcommand allow rejects when any part doesn't match
+./bin/gen agent run --type test-perm --prompt 'Run bash: git diff && git status'
+#   → DENIED: tool Bash call is outside the allow_tools constraint
+
+# Deny wins over allow
+./bin/gen agent run --type test-perm --prompt 'Run bash: git stash list'
+#   → DENIED: tool Bash is blocked by deny_tools
+
+# Bypass-immune wins over everything below
+./bin/gen agent run --type test-perm --prompt 'Run bash: git diff && rm -rf /tmp/dummy'
+#   → DENIED: destructive command
+```
+
+### Manual interactive (main loop, TUI)
+
+```bash
+mkdir -p /tmp/perm_test/.gen
+cat > /tmp/perm_test/.gen/settings.local.json <<'EOF'
+{"permissions": {"allow": ["Bash(echo *)", "Bash(ls *)"]}}
+EOF
+
+tmux new-session -d -s t_perm -x 220 -y 60
+tmux send-keys -t t_perm 'cd /tmp/perm_test && gen' Enter
+sleep 2
+
+# Compound where every subcommand matches → no dialog
+tmux send-keys -t t_perm 'Run bash: echo hi && ls /tmp' Enter
+sleep 5
+tmux capture-pane -t t_perm -p
+
+# Compound where one subcommand has no allow rule → approval dialog
+tmux send-keys -t t_perm 'Run bash: echo hi && cat /etc/hosts' Enter
+sleep 5
+tmux capture-pane -t t_perm -p
+
+tmux kill-session -t t_perm
+rm -rf /tmp/perm_test
+```

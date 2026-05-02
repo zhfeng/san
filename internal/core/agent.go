@@ -88,7 +88,7 @@ type Agent interface {
 // Optional fields: ID, CWD, MaxTurns, InboxBuf, OutboxBuf, CompactFunc.
 //
 // Permission is a tool-layer concern — use tool.WithPermission to wrap Tools
-// before passing them to NewAgent. See docs/permission.md.
+// before passing them to NewAgent. See docs/gen-permission.md.
 type Config struct {
 	ID                string
 	LLM               LLM                                                       // required: inference backend
