@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.16.0] - 2026-05-04
+
+### Added
+
+- Add identity support with built-in identity commands, storage, templates, and tests. (Meng Yan)
+- Add structured system prompt catalog and identity-aware prompt sections. (Meng Yan)
+- Add reusable panel rendering for input views. (Meng Yan)
+
+### Changed
+
+- Refactor agent, skill, and subagent input handling around the updated runtime and system prompt model. (Meng Yan)
+- Update documentation for system prompts, skills, agents, tasks, and core behavior. (Meng Yan)
+
+### Removed
+
+- Remove obsolete agent fork implementation and legacy prompt text files. (Meng Yan)
+
 ## [v1.15.14] - 2026-05-02
 
 ### Fixed
