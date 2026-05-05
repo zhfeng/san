@@ -499,7 +499,7 @@ func (m *model) HandleAgentMessage(msg core.Message) tea.Cmd {
 	if msg.Signal != "" || msg.Role != core.RoleUser {
 		return nil
 	}
-	if !m.userInput.Queue.RemoveSentToInbox(msg.Content, msg.Images) {
+	if _, ok := m.userInput.Queue.RemoveFirstSentToInbox(); !ok {
 		return nil
 	}
 	if m.userInput.Queue.SelectIdx >= 0 {

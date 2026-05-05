@@ -102,15 +102,19 @@ func TestQueueDequeuePendingSkipsSentToInbox(t *testing.T) {
 	}
 }
 
-func TestQueueRemoveSentToInboxRemovesMatchingInjectedItem(t *testing.T) {
+func TestQueueRemoveFirstSentToInboxRemovesOldestSentItem(t *testing.T) {
 	var q Queue
 	img := []core.Image{{FileName: "a.png", MediaType: "image/png"}}
 	q.Enqueue("pending", nil)
 	q.Enqueue("injected", img)
 	q.MarkSentToInbox(1)
 
-	if !q.RemoveSentToInbox("injected", img) {
-		t.Fatal("expected matching sent item to be removed")
+	item, ok := q.RemoveFirstSentToInbox()
+	if !ok {
+		t.Fatal("expected sent item to be removed")
+	}
+	if item.Content != "injected" {
+		t.Fatalf("expected removed item content %q, got %q", "injected", item.Content)
 	}
 	if q.Len() != 1 {
 		t.Fatalf("expected one remaining item, got %d", q.Len())
@@ -118,5 +122,22 @@ func TestQueueRemoveSentToInboxRemovesMatchingInjectedItem(t *testing.T) {
 	remaining, _ := q.At(0)
 	if remaining.Content != "pending" {
 		t.Fatalf("expected pending item to remain, got %q", remaining.Content)
+	}
+}
+
+// FIFO removal must succeed even when the agent's echoed message has slightly
+// different content/images from the queued item (e.g. nil vs empty slice). The
+// previous content-matching impl silently failed in that case, leaving the
+// item stuck in the queue and the message hidden from the conversation view.
+func TestQueueRemoveFirstSentToInboxIgnoresContentMismatch(t *testing.T) {
+	var q Queue
+	q.Enqueue("queued", []core.Image{})
+	q.MarkSentToInbox(0)
+
+	if _, ok := q.RemoveFirstSentToInbox(); !ok {
+		t.Fatal("expected sent item to be removed regardless of content")
+	}
+	if q.Len() != 0 {
+		t.Fatalf("expected queue empty, got %d", q.Len())
 	}
 }

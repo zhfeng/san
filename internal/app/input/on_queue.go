@@ -1,7 +1,6 @@
 package input
 
 import (
-	"reflect"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -141,19 +140,23 @@ func (q *Queue) MarkSentToInbox(idx int) {
 	}
 }
 
-func (q *Queue) RemoveSentToInbox(content string, images []core.Image) bool {
+// RemoveFirstSentToInbox removes the oldest item that has been sent to the
+// agent inbox and returns it. The queue and the inbox channel both preserve
+// FIFO order, so the agent's first user-message echo always corresponds to
+// the first sent-to-inbox item — content matching is unnecessary and brittle
+// (e.g. an empty- vs. nil-images mismatch would silently keep the item
+// stuck in the queue).
+func (q *Queue) RemoveFirstSentToInbox() (QueueItem, bool) {
 	for i, item := range q.items {
 		if !item.SentToInbox {
 			continue
 		}
-		if item.Content == content && reflect.DeepEqual(item.Images, images) {
-			q.items[i] = QueueItem{}
-			q.items = append(q.items[:i], q.items[i+1:]...)
-			q.adjustSelectionAfterRemove(i)
-			return true
-		}
+		q.items[i] = QueueItem{}
+		q.items = append(q.items[:i], q.items[i+1:]...)
+		q.adjustSelectionAfterRemove(i)
+		return item, true
 	}
-	return false
+	return QueueItem{}, false
 }
 
 func (q *Queue) Clear() { q.items = nil }
