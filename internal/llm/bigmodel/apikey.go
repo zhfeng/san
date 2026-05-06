@@ -11,7 +11,7 @@ import (
 	"github.com/genai-io/gen-code/internal/secret"
 )
 
-// APIKeyMeta is the metadata for BigModel (Zhipu GLM) via API Key.
+// APIKeyMeta is the metadata for BigModel (Zhipu / Z.ai — GLM series) via API Key.
 var APIKeyMeta = llm.Meta{
 	Provider:    llm.BigModel,
 	AuthMethod:  llm.AuthAPIKey,

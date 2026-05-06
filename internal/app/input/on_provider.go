@@ -612,7 +612,7 @@ var providerDisplayNames = map[llm.Name]string{
 	llm.MinMax:    "MiniMax",
 	llm.Moonshot:  "Moonshot",
 	llm.Alibaba:   "Alibaba",
-	llm.BigModel:  "BigModel",
+	llm.BigModel:  "Z.ai (GLM series)",
 }
 
 // Enter opens the unified model & provider kit.

@@ -12,7 +12,7 @@ Supports multiple LLM providers. The active provider and model are shown in the 
 | MiniMax | API Key |
 | Moonshot | API Key |
 | Alibaba | API Key |
-| BigModel | API Key |
+| Z.ai (GLM series, via BigModel platform) | API Key |
 
 **Thinking efforts**:
 
@@ -28,7 +28,7 @@ Effort definitions should follow the actual API compatibility layer, not the pro
 | MiniMax | `off`, `think`, `think+`, `ultrathink` | `off` | Reuses Anthropic-compatible thinking effort. |
 | Google | provider-defined effort strings | provider default | Maps to Google thinking/reasoning API parameters. |
 | Alibaba | provider-defined effort strings | provider default | Maps to Alibaba reasoning API parameters. |
-| BigModel | `none`, `low`, `medium`, `high` | `medium` | OpenAI-compatible; sets `extra_body.thinking={"type":"enabled"}`. Capability is gated client-side via a deny-list so future GLM models default to thinking-capable. |
+| Z.ai (GLM) | `none`, `low`, `medium`, `high` | `medium` | OpenAI-compatible; sets `extra_body.thinking={"type":"enabled"}`. Capability is gated client-side via a deny-list so future GLM models default to thinking-capable. |
 
 Anthropic-compatible budget mapping:
 
