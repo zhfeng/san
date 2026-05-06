@@ -12,6 +12,7 @@ type ProviderName string
 
 const (
 	ProviderExa    ProviderName = "exa"
+	ProviderTavily ProviderName = "tavily"
 	ProviderSerper ProviderName = "serper"
 	ProviderBrave  ProviderName = "brave"
 )
@@ -85,6 +86,12 @@ func AllProviders() []Meta {
 			DisplayName:    "Exa AI",
 			RequiresAPIKey: false,
 			EnvVars:        []string{}, // No API key required
+		},
+		{
+			Name:           ProviderTavily,
+			DisplayName:    "Tavily",
+			RequiresAPIKey: true,
+			EnvVars:        []string{"TAVILY_API_KEY"},
 		},
 		{
 			Name:           ProviderSerper,

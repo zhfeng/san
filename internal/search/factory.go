@@ -24,6 +24,8 @@ func CreateProvider(name ProviderName) Provider {
 		return NewSerperProvider(secret.Resolve(serperEnvKey))
 	case ProviderBrave:
 		return NewBraveProvider(secret.Resolve(braveEnvKey))
+	case ProviderTavily:
+		return NewTavilyProvider(secret.Resolve(tavilyEnvKey))
 	case ProviderExa:
 		fallthrough
 	default:

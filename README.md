@@ -116,7 +116,8 @@ Run `/model` in the TUI to see the currently available model list.
 
 | Backend | Environment Variable |
 |:--------|:---------------------|
-| **Exa** | `EXA_API_KEY` |
+| **Exa** | _none_ (default, no key required) |
+| **Tavily** | `TAVILY_API_KEY` |
 | **Brave Search** | `BRAVE_API_KEY` |
 | **Serper** | `SERPER_API_KEY` |
 
