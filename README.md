@@ -15,7 +15,7 @@ Gen Code is a terminal coding assistant with interchangeable LLM providers, assi
 
 ### Open architecture
 
-- **LLM providers** — Anthropic, OpenAI, Google, Moonshot, Alibaba, MiniMax. Runtime selection via `/model`.
+- **LLM providers** — Anthropic, OpenAI, Google, Moonshot, Alibaba, MiniMax, BigModel. Runtime selection via `/model`.
 - **Assistant personas** — Markdown-defined identities at user or project scope; switch with `/identity` ([details](docs/system-prompt.md#identity-custom-personas)).
 - **Search engines** — Exa, Brave, or Serper; switch with `/search`.
 
@@ -108,6 +108,7 @@ User-level config lives in `~/.gen/`; project-level files in `<project>/.gen/` o
 | **Moonshot** (Kimi) | `MOONSHOT_API_KEY` |
 | **Alibaba** (Qwen, DeepSeek) | `DASHSCOPE_API_KEY` |
 | **MiniMax** | `MINIMAX_API_KEY` |
+| **BigModel** (智谱 GLM) | `BIGMODEL_API_KEY` |
 
 Run `/model` in the TUI to see the currently available model list.
 

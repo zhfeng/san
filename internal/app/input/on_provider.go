@@ -150,6 +150,19 @@ type providerModelItem struct {
 	OutputTokenLimit int
 }
 
+func newProviderModelItem(mdl llm.ModelInfo, providerName string, authMethod llm.AuthMethod, current *llm.CurrentModelInfo) providerModelItem {
+	return providerModelItem{
+		ID:               mdl.ID,
+		Name:             mdl.Name,
+		DisplayName:      mdl.DisplayName,
+		ProviderName:     providerName,
+		AuthMethod:       authMethod,
+		IsCurrent:        current != nil && current.ModelID == mdl.ID && string(current.Provider) == providerName,
+		InputTokenLimit:  mdl.InputTokenLimit,
+		OutputTokenLimit: mdl.OutputTokenLimit,
+	}
+}
+
 // ProviderSelector holds the state for the unified model & provider kit.
 type ProviderSelector struct {
 	active bool
@@ -588,6 +601,7 @@ var providerOrder = []llm.Name{
 	llm.MinMax,
 	llm.Moonshot,
 	llm.Alibaba,
+	llm.BigModel,
 }
 
 // providerDisplayNames maps provider to human-readable name.
@@ -598,6 +612,7 @@ var providerDisplayNames = map[llm.Name]string{
 	llm.MinMax:    "MiniMax",
 	llm.Moonshot:  "Moonshot",
 	llm.Alibaba:   "Alibaba",
+	llm.BigModel:  "BigModel",
 }
 
 // Enter opens the unified model & provider kit.
@@ -668,10 +683,6 @@ func (s *ProviderSelector) loadProviderData() (tea.Cmd, error) {
 	}
 
 	current := store.GetCurrentModel()
-	var currentModelID string
-	if current != nil {
-		currentModelID = current.ModelID
-	}
 
 	s.allModels = nil
 	allCached := store.GetAllCachedModels()
@@ -681,13 +692,13 @@ func (s *ProviderSelector) loadProviderData() (tea.Cmd, error) {
 
 	var asyncCmd tea.Cmd
 	if len(allCached) > 0 {
-		s.loadModelsCached(allCached, currentModelID)
+		s.loadModelsCached(allCached, current)
 	} else {
-		asyncCmd = s.loadModelsAsync(store, currentModelID)
+		asyncCmd = s.loadModelsAsync(store, current)
 	}
 
 	s.ensureModelProvidersExist()
-	s.sortConnectedProviders(currentModelID)
+	s.sortConnectedProviders(current)
 
 	return asyncCmd, nil
 }
@@ -724,7 +735,7 @@ func (s *ProviderSelector) ensureModelProvidersExist() {
 
 // loadModelsAsync returns a tea.Cmd that fetches models from all connected
 // providers concurrently, sending a ProviderModelsLoadedMsg when done.
-func (s *ProviderSelector) loadModelsAsync(store *llm.Store, currentModelID string) tea.Cmd {
+func (s *ProviderSelector) loadModelsAsync(store *llm.Store, current *llm.CurrentModelInfo) tea.Cmd {
 	connections := store.GetConnections()
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -762,16 +773,7 @@ func (s *ProviderSelector) loadModelsAsync(store *llm.Store, currentModelID stri
 			_ = store.CacheModels(prov, r.authMethod, r.models)
 
 			for _, mdl := range r.models {
-				models = append(models, providerModelItem{
-					ID:               mdl.ID,
-					Name:             mdl.Name,
-					DisplayName:      mdl.DisplayName,
-					ProviderName:     r.providerName,
-					AuthMethod:       r.authMethod,
-					IsCurrent:        mdl.ID == currentModelID,
-					InputTokenLimit:  mdl.InputTokenLimit,
-					OutputTokenLimit: mdl.OutputTokenLimit,
-				})
+				models = append(models, newProviderModelItem(mdl, r.providerName, r.authMethod, current))
 			}
 		}
 		return ProviderModelsLoadedMsg{Models: models}
@@ -783,18 +785,16 @@ func (s *ProviderSelector) HandleModelsLoaded(msg ProviderModelsLoadedMsg) {
 	s.allModels = msg.Models
 	s.ensureModelProvidersExist()
 
-	var currentModelID string
+	var current *llm.CurrentModelInfo
 	if s.store != nil {
-		if current := s.store.GetCurrentModel(); current != nil {
-			currentModelID = current.ModelID
-		}
+		current = s.store.GetCurrentModel()
 	}
-	s.sortConnectedProviders(currentModelID)
+	s.sortConnectedProviders(current)
 	s.rebuildVisibleItems()
 }
 
 // loadModelsCached loads models from the store cache.
-func (s *ProviderSelector) loadModelsCached(allCached map[string][]llm.ModelInfo, currentModelID string) {
+func (s *ProviderSelector) loadModelsCached(allCached map[string][]llm.ModelInfo, current *llm.CurrentModelInfo) {
 	for key, models := range allCached {
 		parts := strings.SplitN(key, ":", 2)
 		providerName := key
@@ -805,39 +805,21 @@ func (s *ProviderSelector) loadModelsCached(allCached map[string][]llm.ModelInfo
 		}
 
 		for _, mdl := range models {
-			s.allModels = append(s.allModels, providerModelItem{
-				ID:               mdl.ID,
-				Name:             mdl.Name,
-				DisplayName:      mdl.DisplayName,
-				ProviderName:     providerName,
-				AuthMethod:       authMethod,
-				IsCurrent:        mdl.ID == currentModelID,
-				InputTokenLimit:  mdl.InputTokenLimit,
-				OutputTokenLimit: mdl.OutputTokenLimit,
-			})
+			s.allModels = append(s.allModels, newProviderModelItem(mdl, providerName, authMethod, current))
 		}
 	}
 }
 
-// sortConnectedProviders sorts connected providers so that the current model's
-// provider comes first, then alphabetical.
-func (s *ProviderSelector) sortConnectedProviders(currentModelID string) {
-	if currentModelID == "" {
+// sortConnectedProviders sorts connected providers so that the current
+// selection's provider comes first, then alphabetical.
+func (s *ProviderSelector) sortConnectedProviders(current *llm.CurrentModelInfo) {
+	if current == nil {
 		return
 	}
-	var currentProvider string
-	for _, m := range s.allModels {
-		if m.ID == currentModelID {
-			currentProvider = m.ProviderName
-			break
-		}
-	}
-	if currentProvider == "" {
-		return
-	}
+	currentProvider := current.Provider
 	sort.SliceStable(s.connectedProviders, func(i, j int) bool {
-		iMatch := string(s.connectedProviders[i].Provider) == currentProvider
-		jMatch := string(s.connectedProviders[j].Provider) == currentProvider
+		iMatch := s.connectedProviders[i].Provider == currentProvider
+		jMatch := s.connectedProviders[j].Provider == currentProvider
 		if iMatch != jMatch {
 			return iMatch
 		}

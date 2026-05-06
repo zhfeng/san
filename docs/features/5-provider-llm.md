@@ -12,6 +12,7 @@ Supports multiple LLM providers. The active provider and model are shown in the 
 | MiniMax | API Key |
 | Moonshot | API Key |
 | Alibaba | API Key |
+| BigModel | API Key |
 
 **Thinking efforts**:
 
@@ -27,6 +28,7 @@ Effort definitions should follow the actual API compatibility layer, not the pro
 | MiniMax | `off`, `think`, `think+`, `ultrathink` | `off` | Reuses Anthropic-compatible thinking effort. |
 | Google | provider-defined effort strings | provider default | Maps to Google thinking/reasoning API parameters. |
 | Alibaba | provider-defined effort strings | provider default | Maps to Alibaba reasoning API parameters. |
+| BigModel | `none`, `low`, `medium`, `high` | `medium` | OpenAI-compatible; sets `extra_body.thinking={"type":"enabled"}`. Capability is gated client-side via a deny-list so future GLM models default to thinking-capable. |
 
 Anthropic-compatible budget mapping:
 
@@ -124,6 +126,15 @@ TestMergeConsecutiveMessages_Single        — single message handled
 
 # Moonshot
 TestMoonshotAssistantMessagesIncludeReasoningContent — reasoning content included
+
+# BigModel
+TestBigModelThinkingExtraBody                          — extra_body.thinking set when effort != none and model supports thinking
+TestBigModelNoThinkingWhenEffortNone                   — no thinking field for effort none/off/empty
+TestBigModelNoThinkingForNonThinkingModel              — no thinking field for known non-thinking models
+TestBigModelAssistantMessagesIncludeReasoningContent   — reasoning_content carried on assistant turns
+TestBigModelListModelsReturnsAPIResults                — /models response is parsed dynamically with context_length lift
+TestBigModelListModelsReturnsErrorOnAPIFailure         — /models errors propagate (no static fallback)
+TestBigModelSupportsThinking                           — deny-list: known non-thinking IDs false, everything else (including future glm-6.0) true
 
 # Client wrapper
 TestClientSend                             — send request

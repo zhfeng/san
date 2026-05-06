@@ -108,6 +108,7 @@ func TestNonInteractivePrintMode(t *testing.T) {
 		"GOOGLE_API_KEY",
 		"MOONSHOT_API_KEY",
 		"ALIBABA_API_KEY",
+		"BIGMODEL_API_KEY",
 		"ANTHROPIC_VERTEX_PROJECT_ID",
 		"HOME",
 	)

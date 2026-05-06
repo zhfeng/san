@@ -23,6 +23,8 @@ func DefaultModel(providerName string, authMethod string) string {
 		return "qwen-plus"
 	case "minmax":
 		return "MiniMax-M2.7"
+	case "bigmodel":
+		return "glm-5.1"
 	default:
 		return "claude-sonnet-4-20250514"
 	}
