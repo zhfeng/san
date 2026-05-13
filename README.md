@@ -15,9 +15,13 @@ Gen Code is a terminal coding assistant with interchangeable LLM providers, assi
 
 ### Open architecture
 
+<p align="center">
+  <img src="docs/open-architecture.svg" alt="Gen Code open architecture — four dimensions: model providers, search engines, role switching, and skills/extensions" width="100%">
+</p>
+
 - **LLM providers** — Anthropic, OpenAI, Google, Moonshot, Alibaba, MiniMax, Z.ai (GLM). Runtime selection via `/model`.
 - **Assistant personas** — Markdown-defined identities at user or project scope; switch with `/identity` ([details](docs/system-prompt.md#identity-custom-personas)).
-- **Search engines** — Exa, Brave, or Serper; switch with `/search`.
+- **Search engines** — Exa, Tavily, Brave, or Serper; switch with `/search`.
 
 ### Extensibility
 
