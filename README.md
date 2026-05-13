@@ -22,7 +22,7 @@ Gen Code is a terminal coding assistant with interchangeable LLM providers, assi
 - **LLM providers** — Anthropic, OpenAI, Google, Moonshot, Alibaba, MiniMax, Z.ai (GLM); swap via `/model`.
 - **Search backends** — Exa, Tavily, Brave, Serper; swap via `/search`.
 - **Personas** — Markdown identities scoped to user or project; swap via `/identity` ([details](docs/system-prompt.md#identity-custom-personas)).
-- **Skills & extensions** — Claude Code–compatible skills, plugins, and MCP servers run unmodified; subagents support permission modes, tool whitelists, and sandboxing; lifecycle hooks span shell, LLM, agent, and HTTP backends; project memory auto-loads user and project instructions.
+- **Skills & extensions** — Claude Code skills, plugins, and MCP servers run unmodified; sandboxed subagents; lifecycle hooks (shell, LLM, agent, HTTP); auto-loaded project memory.
 
 ### Engineering
 
