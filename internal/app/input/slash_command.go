@@ -89,6 +89,7 @@ func NewCommandController(deps CommandDeps) CommandController {
 func builtinCommandHandlers() map[string]commandHandler {
 	return map[string]commandHandler{
 		"model":          (*CommandController).handleModelCommand,
+		"provider":       (*CommandController).handleModelCommand,
 		"clear":          (*CommandController).handleClearCommand,
 		"fork":           (*CommandController).handleForkCommand,
 		"resume":         (*CommandController).handleResumeCommand,

@@ -26,6 +26,7 @@ type Info struct {
 func builtinCommands() []Info {
 	return []Info{
 		{Name: "model", Description: "Select model and manage provider connections"},
+		{Name: "provider", Description: "Select model and manage provider connections"},
 		{Name: "clear", Description: "Clear chat history"},
 		{Name: "fork", Description: "Fork current conversation into a new session"},
 		{Name: "resume", Description: "Resume a previous session (opens session selector)"},
