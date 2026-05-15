@@ -51,37 +51,38 @@ type ForkCommand struct {
 	Time               time.Time
 }
 
-type ReplaceCommand struct {
-	Transcript Transcript
-}
-
 type ListOptions struct {
 	Limit            int
 	IncludeSidechain bool
 }
 
-func PatchTitle(title string) PatchOp {
-	return mustPatch(PatchPathTitle, title)
-}
-
-func PatchLastPrompt(prompt string) PatchOp {
-	return mustPatch(PatchPathLastPrompt, prompt)
-}
-
-func patchTag(tag string) PatchOp {
-	return mustPatch(PatchPathTag, tag)
-}
-
-func patchMode(mode string) PatchOp {
-	return mustPatch(PatchPathMode, mode)
-}
-
+func PatchTitle(title string) PatchOp       { return mustPatch(PatchPathTitle, title) }
+func PatchLastPrompt(prompt string) PatchOp { return mustPatch(PatchPathLastPrompt, prompt) }
+func PatchTag(tag string) PatchOp           { return mustPatch(PatchPathTag, tag) }
+func PatchMode(mode string) PatchOp         { return mustPatch(PatchPathMode, mode) }
 func PatchTasks(tasks []tracker.Task) PatchOp {
 	return mustPatch(PatchPathTasks, tasks)
 }
+func PatchWorktree(worktree *WorktreeState) PatchOp { return mustPatch(PatchPathWorktree, worktree) }
 
-func patchWorktree(worktree *WorktreeState) PatchOp {
-	return mustPatch(PatchPathWorktree, worktree)
+// StateOpsFor builds the full set of patch ops for a projected state.
+// Used by the session save path to express the current snapshot as a single
+// patch record. Zero-valued fields still produce ops (the projector applies
+// last-wins, so re-patching empty values is safe).
+func StateOpsFor(state State) []PatchOp {
+	ops := []PatchOp{
+		PatchTitle(state.Title),
+		PatchLastPrompt(state.LastPrompt),
+		PatchTag(state.Tag),
+		PatchMode(state.Mode),
+	}
+	if len(state.Tasks) > 0 {
+		ops = append(ops, PatchTasks(TrackerTasksFromView(state.Tasks)))
+	}
+	if state.Worktree != nil {
+		ops = append(ops, PatchWorktree(state.Worktree))
+	}
+	return ops
 }
 
 func mustPatch(path string, v any) PatchOp {
