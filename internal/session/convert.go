@@ -13,7 +13,14 @@ func ConvertToEntries(messages []core.ChatMessage) []Entry {
 			continue
 		}
 
-		uuid := generateShortID()
+		// Prefer the stable ID stamped at conv.Append time; fall back to a
+		// fresh one only for messages that arrive without an ID (legacy
+		// paths, tool results assembled inline, etc.). Stable IDs are
+		// required for the append-only save path's dedup to work.
+		uuid := msg.ID
+		if uuid == "" {
+			uuid = generateShortID()
+		}
 
 		var parentUuid *string
 		if prevUUID != "" {

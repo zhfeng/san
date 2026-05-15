@@ -10,6 +10,7 @@ import (
 	"time"
 
 	session "github.com/genai-io/gen-code/internal/session"
+	taskTracker "github.com/genai-io/gen-code/internal/task/tracker"
 )
 
 // newTestStore creates a Store using a temp directory instead of ~/.gen/projects/.
@@ -535,5 +536,89 @@ func TestSession_ContinueRestoresMessages(t *testing.T) {
 		if loaded.Entries[i].Type != wantType {
 			t.Errorf("entry[%d]: want type %q, got %q", i, wantType, loaded.Entries[i].Type)
 		}
+	}
+}
+
+// Regression: the append-only persistence path must not duplicate prior
+// messages when Save is called repeatedly with the same UUIDs. The dedup
+// cache hinges on stable IDs from upstream; this test pins that contract
+// at the Store.Save boundary.
+func TestSession_SaveTwice_NoDuplication(t *testing.T) {
+	store := newTestStore(t)
+
+	sess := &session.Snapshot{
+		Metadata: session.SessionMetadata{ID: "save-twice"},
+		Entries: []session.Entry{
+			makeUserEntry("m1", "hello"),
+			makeAssistantEntry("m2", "hi"),
+		},
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("Save #1: %v", err)
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("Save #2: %v", err)
+	}
+
+	loaded, err := store.Load("save-twice")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded.Entries) != 2 {
+		t.Fatalf("expected 2 entries after two saves, got %d (dedup failed)", len(loaded.Entries))
+	}
+
+	// Count raw message records on disk too — projection only shows the
+	// active chain, so a duplicated history could pass the entry count check.
+	raw, err := os.ReadFile(store.SessionPath("save-twice"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	count := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, `"type":"message.appended"`) ||
+			strings.Contains(line, `"type":"transcript.message.appended"`) {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("on-disk message records = %d, want 2 (dedup leaked duplicates)", count)
+	}
+}
+
+// Regression: clearing tasks (or worktree) on a subsequent Save must clear
+// them on reload. Under append-only last-wins projection, the StateOpsFor
+// helper must always emit Patch ops so absence-of-op doesn't resurrect
+// stale state from earlier patches.
+func TestSession_SaveClearedTasks_ClearsOnReload(t *testing.T) {
+	store := newTestStore(t)
+
+	withTasks := &session.Snapshot{
+		Metadata: session.SessionMetadata{ID: "clear-tasks"},
+		Entries:  []session.Entry{makeUserEntry("m1", "hi")},
+		Tasks: []taskTracker.Task{{
+			ID: "t1", Subject: "do thing", Status: "in_progress",
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}},
+	}
+	if err := store.Save(withTasks); err != nil {
+		t.Fatalf("Save with tasks: %v", err)
+	}
+
+	cleared := &session.Snapshot{
+		Metadata: session.SessionMetadata{ID: "clear-tasks"},
+		Entries:  []session.Entry{makeUserEntry("m1", "hi")},
+		Tasks:    nil,
+	}
+	if err := store.Save(cleared); err != nil {
+		t.Fatalf("Save cleared: %v", err)
+	}
+
+	loaded, err := store.Load("clear-tasks")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded.Tasks) != 0 {
+		t.Fatalf("expected tasks to be cleared, got %d (stale tasks resurrected)", len(loaded.Tasks))
 	}
 }

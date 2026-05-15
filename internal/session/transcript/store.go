@@ -51,37 +51,40 @@ type ForkCommand struct {
 	Time               time.Time
 }
 
-type ReplaceCommand struct {
-	Transcript Transcript
-}
-
 type ListOptions struct {
 	Limit            int
 	IncludeSidechain bool
 }
 
-func PatchTitle(title string) PatchOp {
-	return mustPatch(PatchPathTitle, title)
-}
-
-func PatchLastPrompt(prompt string) PatchOp {
-	return mustPatch(PatchPathLastPrompt, prompt)
-}
-
-func patchTag(tag string) PatchOp {
-	return mustPatch(PatchPathTag, tag)
-}
-
-func patchMode(mode string) PatchOp {
-	return mustPatch(PatchPathMode, mode)
-}
-
+func PatchTitle(title string) PatchOp       { return mustPatch(PatchPathTitle, title) }
+func PatchLastPrompt(prompt string) PatchOp { return mustPatch(PatchPathLastPrompt, prompt) }
+func PatchTag(tag string) PatchOp           { return mustPatch(PatchPathTag, tag) }
+func PatchMode(mode string) PatchOp         { return mustPatch(PatchPathMode, mode) }
 func PatchTasks(tasks []tracker.Task) PatchOp {
 	return mustPatch(PatchPathTasks, tasks)
 }
+func PatchWorktree(worktree *WorktreeState) PatchOp { return mustPatch(PatchPathWorktree, worktree) }
 
-func patchWorktree(worktree *WorktreeState) PatchOp {
-	return mustPatch(PatchPathWorktree, worktree)
+// StateOpsFor builds the full set of patch ops for a projected state.
+// Used by the session save path to express the current snapshot as a single
+// patch record.
+//
+// All fields are emitted unconditionally. Under the append-only persistence
+// path the projector applies last-wins across patch records, so a missing op
+// would let prior values survive rather than clear them. Always emitting
+// ensures that clearing a value (empty tasks, exited worktree) reflects on
+// the next save. PatchTasks with an empty slice serializes to "[]" and
+// PatchWorktree(nil) to "null" — both already round-trip correctly through
+// the projector.
+func StateOpsFor(state State) []PatchOp {
+	return []PatchOp{
+		PatchTitle(state.Title),
+		PatchLastPrompt(state.LastPrompt),
+		PatchTag(state.Tag),
+		PatchMode(state.Mode),
+		PatchTasks(TrackerTasksFromView(state.Tasks)),
+		PatchWorktree(state.Worktree),
+	}
 }
 
 func mustPatch(path string, v any) PatchOp {

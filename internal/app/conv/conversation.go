@@ -31,6 +31,12 @@ func NewConversation() ConversationModel {
 }
 
 func (m *ConversationModel) Append(msg core.ChatMessage) {
+	// Stamp an ID once at append time so subsequent transcript saves can
+	// dedupe by it. Without this, every save assigns a fresh UUID and the
+	// append-only persistence path re-writes the entire history each turn.
+	if msg.ID == "" {
+		msg.ID = core.NewMessageID()
+	}
 	m.Messages = append(m.Messages, msg)
 }
 

@@ -1,12 +1,24 @@
 package core
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 )
+
+// NewMessageID returns a fresh short hex identifier for a ChatMessage.
+// 8 bytes (16 hex chars) — collision space is large enough for the
+// per-session message volume we ever see; brevity matters because the
+// ID appears in every transcript record's id field.
+func NewMessageID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
 
 // Role identifies who produced a message in the conversation.
 type Role string
@@ -46,6 +58,11 @@ type Message struct {
 
 // ChatMessage represents a UI-layer chat message with display state.
 type ChatMessage struct {
+	// ID is a stable per-message identifier assigned once at construction.
+	// The session.Save path uses it to dedupe appends, so it must not change
+	// across saves of the same message — empty IDs would trigger re-appends
+	// of the entire conversation on every persist.
+	ID                string
 	Role              Role
 	Content           string
 	DisplayContent    string
