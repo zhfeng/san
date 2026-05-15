@@ -464,7 +464,7 @@ func (m *model) StartProviderTurn(content string) tea.Cmd {
 	if m.env.LLMProvider == nil {
 		m.conv.Append(core.ChatMessage{
 			Role:    core.RoleNotice,
-			Content: "No provider connected. Use /provider to connect.",
+			Content: "No provider connected. Use /model to connect.",
 		})
 		return tea.Batch(m.CommitMessages()...)
 	}
@@ -689,7 +689,7 @@ func (m *model) cancelRemainingToolCalls(startIdx int) {
 
 func (m *model) HandleSkillInvocation() tea.Cmd {
 	if m.env.LLMProvider == nil {
-		m.conv.AddNotice("No provider connected. Use /provider to connect.")
+		m.conv.AddNotice("No provider connected. Use /model to connect.")
 		m.userInput.Skill.ClearPending()
 		return tea.Batch(m.CommitMessages()...)
 	}

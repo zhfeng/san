@@ -151,7 +151,7 @@ func runPrint(userMessage string) error {
 	}
 
 	if llmProvider == nil {
-		return fmt.Errorf("no provider connected. Run 'gen' and use /provider to connect")
+		return fmt.Errorf("no provider connected. Run 'gen' and use /model to connect")
 	}
 
 	completionOpts := llm.CompletionOptions{
