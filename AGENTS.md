@@ -46,18 +46,9 @@ Update those files when the rules change. Do not duplicate them here.
 
 ## Common Commands
 
-```bash
-make build
-make test
-make lint
-make format
-```
-
-If the sandbox blocks Go cache writes, use a writable cache:
-
-```bash
-GOCACHE=/private/tmp/gencode-go-build-cache go test ./...
-```
+See `docs/operations/development.md` for build / test / lint / format
+and the sandbox-friendly `GOCACHE` workaround. Update that file when
+commands change. Do not duplicate them here.
 
 ## Documentation Rules
 

@@ -142,10 +142,10 @@ Anthropic providers use `noExpire: true` in model cache because they don't have 
 
 | File | Purpose |
 |------|---------|
-| `internal/tui/commands.go` | `/tokenlimit` command handler, auto-fetch agent |
-| `internal/provider/store.go` | `SetTokenLimit`, `GetTokenLimit`, model cache |
-| `internal/tui/render.go` | `renderTokenUsage()` - 80% indicator |
-| `internal/tui/handlers.go` | `handleTokenLimitResult()` - async result handling |
+| `internal/app/input/on_token_limits.go` | `/tokenlimit` slash command handler, auto-fetch agent |
+| `internal/llm/store.go` | `SetTokenLimit`, `GetTokenLimit`, model cache |
+| `internal/app/kit/token.go` | token usage rendering and 80% threshold indicator |
+| `internal/app/conv/update.go` | `handleTokenLimitResult()` async result handling |
 
 ## Key Functions
 

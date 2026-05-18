@@ -21,38 +21,36 @@ go build -o gen ./cmd/gen
 ### Project Structure
 
 ```
-cmd/               # Binary entrypoints
-docs/              # Architecture and feature docs
-internal/
-├── app/           # Interactive app shell and feature-oriented UI orchestration
-├── core/          # Reusable agent loop/runtime
-├── provider/      # LLM provider implementations and registry
-├── tool/          # Built-in tools and execution registry
-├── plugin/        # Plugin loading and integration
-├── skill/         # Skill loading and registry
-├── mcp/           # MCP protocol support
-├── config/        # Settings and permissions
-├── ui/            # Shared presentational UI components/styles
-└── ...            # Other focused subsystems
-tests/
-└── integration/   # Cross-package behavioral tests
+cmd/               # Binary entrypoints (cmd/gen)
+docs/              # Documentation (architecture.md + packages/ + concepts/ + reference/ + guides/ + operations/)
+internal/          # All Go code; see docs/reference/package-map.md for the full table
+tools/             # Developer tooling (layercheck, …)
+tests/integration/ # Cross-package behavioral tests
+notes/             # Work-in-progress plans (not durable docs)
 ```
 
-See `docs/architecture.md` for package responsibilities, dependency direction, and placement rules for new code.
+See [`docs/architecture.md`](docs/architecture.md) for primitives and
+the runtime model. See [`docs/reference/package-map.md`](docs/reference/package-map.md)
+and [`docs/reference/dependency-rules.md`](docs/reference/dependency-rules.md)
+for the full package list, layer assignment, and import rules. New
+package contributions also need a [`docs/packages/<name>.md`](docs/packages/)
+following [`docs/packages/TEMPLATE.md`](docs/packages/TEMPLATE.md).
 
 ### Run Tests
 
 ```bash
-GOCACHE=/tmp/gocache go test ./...
+GOCACHE=/private/tmp/gencode-go-build-cache go test ./...
 ```
 
 Transcript/session focused suites:
 
 ```bash
-GOCACHE=/tmp/gocache go test ./internal/transcriptstore ./internal/app/session ./tests/integration/session/... ./tests/integration/cli/...
+GOCACHE=/private/tmp/gencode-go-build-cache go test \
+  ./internal/session/... ./tests/integration/session/... ./tests/integration/cli/...
 ```
 
-Transcript storage layout, recording rules, and the event model are documented in `docs/packages/session.md`.
+Transcript storage layout, recording rules, and the event model are
+documented in [`docs/packages/session.md`](docs/packages/session.md).
 
 ### Debug Mode
 
