@@ -24,8 +24,11 @@ type Service interface {
 	EditConfig(name string) (*EditInfo, error) // prepare config for editing
 	SaveConfig(info *EditInfo) error           // save edited config
 
-	// registry access (backward compat)
-	Registry() *Registry // underlying registry for callers that need it directly
+	// Registry returns the concrete registry. Tracked as a "Known Violation"
+	// in docs/packages/mcp.md and notes/tech-debt.md — removing it requires
+	// touching subagent.Executor.SetMCP, input.SelectorDeps.MCPRegistry, and
+	// conv.DefaultMCPExecutor signatures across the codebase.
+	Registry() *Registry
 }
 
 // Compile-time check: *service implements Service.

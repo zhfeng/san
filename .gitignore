@@ -28,3 +28,4 @@ vendor/
 CLAUDE.md
 CLAUDE.local.md
 .autodev/
+/layercheck

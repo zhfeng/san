@@ -1,0 +1,67 @@
+# Documentation Index
+
+This directory is the durable knowledge base for Gen Code. Keep `README.md`
+concise, use `AGENTS.md` as the short navigation map, and put lasting
+explanations here.
+
+## Primary Entrypoints
+
+- `../README.md` — product overview, installation, usage.
+- `../AGENTS.md` — short agent and contributor navigation guide.
+- `architecture.md` — system-level overview and primitives.
+- `packages/index.md` — per-package design pages.
+- `concepts/index.md` — cross-cutting concept pages.
+- `operations/development.md` — local development workflow.
+
+## By Reader Goal
+
+### Understand the system
+
+- `architecture.md` — primitives, runtime model, layer model.
+- `packages/` — one page per Go package; each has a Contract section with
+  the package's public Go interface.
+- `concepts/` — cross-cutting concepts that span multiple packages
+  (extension model, harness channels, permission model).
+
+### Look up a fact
+
+- `reference/slash-commands.md` — all slash commands.
+- `reference/configuration.md` — config file fields.
+- `reference/dependency-rules.md` — layer / import rules.
+- `reference/package-map.md` — package-to-layer assignment.
+- `reference/permission-model.md` — permission rule syntax and modes.
+- `reference/token-limits.md`, `reference/cost-tracking.md`,
+  `reference/cli-startup.md`, `reference/loop.md`,
+  `reference/file-naming.md`, `reference/config-files.md`,
+  `reference/llm-providers.md`, `reference/minmax-provider.md`,
+  `reference/claude-permission-compat.md`.
+
+### Do something
+
+- `guides/explore-mode.md` — using the explore subagent.
+- `operations/development.md` — build / test / lint / format.
+- `operations/testing.md` — test strategy and local commands.
+- `operations/release.md` — release process.
+- `operations/troubleshooting.md` — common development issues.
+- `operations/benchmark.md` — reproduce the benchmark numbers.
+
+### Know why a decision was made
+
+- `design/principles.md` — engineering principles for structure and docs.
+- `design/decisions/` — architecture decision records (ADRs).
+
+## Work-in-Progress Plans
+
+Plans live at the repo root under `notes/` (not in `docs/`):
+
+- `notes/active/` — active restructuring or feature plans.
+- `notes/completed/` — completed plans kept for historical context.
+- `notes/tech-debt.md` — known structural debt and follow-up candidates.
+
+## Update Policy
+
+When code changes, update the relevant package page in `packages/` in the
+same pull request. When a new top-level package is added or a package
+moves, update `reference/package-map.md` and `reference/dependency-rules.md`
+together. New cross-cutting concept ⇒ a page in `concepts/`. New decision
+⇒ an ADR in `design/decisions/`.

@@ -1,370 +1,112 @@
 # Architecture
 
-GenCode is a terminal AI agent built on [Bubble Tea](https://github.com/charmbracelet/bubbletea). The core design is an **event-based agent**: the Agent communicates through Inbox/Outbox channels, and the TUI observes events via the Bubble Tea MVU (Model-View-Update) loop. This channel-based, loosely-coupled architecture is designed for extensibility — each agent is an independent goroutine with its own Inbox/Outbox, agents interact only through messages with no shared mutable state, making it straightforward to scale from single-agent to multi-agent orchestration.
+Gen Code is a single-binary terminal AI coding assistant. The runtime is an
+event-driven agent loop running inside a Bubble Tea TUI shell, with extension
+surfaces for skills, plugins, MCP servers, hooks, slash commands, and
+subagents.
 
-## Bubble Tea MVU
+This page is the system-level overview. For per-package design see
+[`packages/`](packages/). For dependency rules and package-layer assignments
+see [`reference/dependency-rules.md`](reference/dependency-rules.md) and
+[`reference/package-map.md`](reference/package-map.md).
 
-```go
-type Model interface {
-    Init() Cmd                  // called once at startup, returns first Cmd
-    Update(Msg) (Model, Cmd)    // receives msg, returns updated Model + side effect
-    View() string               // reads Model, returns string to render
-}
-```
+## Primitives
 
-The loop: `Init → Cmd → Msg → Update → Cmd → Msg → ...`, with `View()` after every `Update`.
+1. **Agent** — an LLM-in-a-loop with `Inbox` and `Outbox` channels. Contracts
+   in `internal/core`; construction in `internal/agent`. Agents communicate
+   only through messages, no shared mutable state.
+2. **Tools** — built-in capabilities the agent can call. Registered in
+   `internal/tool` and gated by `internal/setting` permissions.
+3. **Extensions** — skill, plugin, MCP server, hook, slash command, subagent.
+   Four extension primitives; *plugin* is one *source* among many — see
+   [`concepts/extension-model.md`](concepts/extension-model.md).
+4. **Sessions** — transcript persistence, resume, fork, projection
+   (`internal/session`). Replayable in the inspector
+   (`internal/inspector`).
+5. **Providers** — pluggable LLM backends
+   (`internal/llm/{anthropic,openai,google,...}`) and search backends
+   (`internal/search/{exa,tavily,brave,serper}`).
 
-### Best Practices
+## Runtime Model
 
-1. **Model is data, Update is transition, View is pure render, Cmd is side effect.** All I/O goes through `tea.Cmd` — never do I/O inside Update. Each event returns a new listen Cmd, forming a chain.
-2. **Sub-model decomposition.** Split Model by event source. Each sub-model owns its `Update()` and `View()`. The root Model routes by `tea.Msg` type.
-3. **Message types are routing keys.** Define concrete msg types — the more precise, the cleaner the switch. No string/int dispatch.
-4. **State machine over bool flags.** Use explicit mode enums to control UI behavior. Both Update and View branch on mode, avoiding combinatorial flag explosion.
-5. **Sub-models call up via Runtime interfaces, never import root.** The root implements each sub-model's Runtime interface through an adapter struct.
-6. **Cmd factories live with their handlers.** Each sub-model owns its Cmd factories (e.g. `conv/` owns `DrainAgentOutbox()`). Cross-cutting Cmds (e.g. `sendToAgent()`) live in root files. No central `cmd.go` — co-location beats centralization at scale.
-7. **Project structure mirrors the architecture.** See [Directory Structure](#directory-structure) below.
-
-## Three-Source MVU
-
-Three input sources feed the Agent Inbox. The Outbox outputs events that mutate the TUI Model and trigger View. Together, 3 inputs + Agent Output form the four paths that update the Model.
-
-```
-   Source 1 (User)       Source 2 (Agents)        Source 3 (System)
-   submit ──┐            agentDone ──┐            cronTick ──────┐
-   command ──┤           sendMsg ────┤            asyncHook ─────┤
-   modalResp ┤           selfInject ─┤            fileChange ────┤
-             ▼                       ▼                           ▼
-          input/                   hub/                     trigger/
-             │                       │                           │
-             └───────────────┬───────┴───────────────────────────┘
-                             │ sendToAgent()
-                             ▼
-   ╔═══════════════════════════════════════════════════════════════════╗
-   ║                         Agent                                     ║
-   ║                                                                   ║
-   ║  ┌──────────────────────────────────────────────────────┐        ║
-   ║  │                      Inbox                            │        ║
-   ║  └──────────────────────────┬───────────────────────────┘        ║
-   ║                             ▼                                     ║
-   ║  ┌──────────────────────────────────────────────────────┐        ║
-   ║  │  Run Loop: wait(inbox) → drain → think+act cycle     │        ║
-   ║  │                                                      │        ║
-   ║  │  LLM infer ──► tool exec ──► LLM infer ──► ...      │        ║
-   ║  │       │              │                               │        ║
-   ║  │       │         PostTool(Agent)                      │        ║
-   ║  │       │              │ spawn                         │        ║
-   ║  │       ▼              ▼                               │        ║
-   ║  │  end_turn     Background Agents                      │        ║
-   ║  │       │        ┌─────┐ ┌─────┐                       │        ║
-   ║  │       │        │ B1  │ │ B2  │ ...                   │        ║
-   ║  │       │        └──┬──┘ └──┬──┘                       │        ║
-   ║  │       │           │complete                          │        ║
-   ║  │       │           ▼                                  │        ║
-   ║  │       │        → Source 2 (agent → agent)            │        ║
-   ║  └───────┼──────────────────────────────────────────────┘        ║
-   ║          ▼                                                        ║
-   ║  ┌──────────────────────────────────────────────────────┐        ║
-   ║  │                     Outbox                            │        ║
-   ║  │  PreInfer · OnChunk · PostInfer                       │        ║
-   ║  │  PreTool  · PostTool · OnTurn · OnStop                │        ║
-   ║  └──────────────────────────┬───────────────────────────┘        ║
-   ║                             │                                     ║
-   ║  ┌────────┐                 │                                     ║
-   ║  │PermReq │ ── bridge ──►  │                                     ║
-   ║  │Channel │    Source 1     │                                     ║
-   ║  └────────┘                 │                                     ║
-   ╚═════════════════════════════╪═════════════════════════════════════╝
-                                 │
-                                 ▼
-                        TUI Observation (conv/)
-                   ┌──────────────────────┐
-                   │  AgentOutboxMsg       │
-                   │  → sync conv state    │
-                   │  → update tokens      │
-                   │  → render streaming   │
-                   │                       │
-                   │  PermBridgeMsg        │
-                   │  → show approval      │
-                   │  → user Y/N           │
-                   │  → bridge to Source 1  │
-                   └──────────────────────┘
-```
-
-**Three input paths** — all converge at the Inbox via `sendToAgent()`:
-- **Source 1 (User)**: submit / command / modal response → if agent busy, queued until OnTurn drains
-- **Source 2 (Agents)**: background agent completion via Hub → `hub.Publish()` → consumer channel / SendMessage / self-inject (hook blocked)
-- **Source 3 (System)**: cron tick / async hook callback / file watcher
-
-**Output path**: Outbox → TUI observes events for rendering. PermReq bridges back to Source 1 (approval → user decision → unblock agent).
-
-**OnTurn feedback**: when the agent finishes a think+act cycle, the TUI drains all queued sources back into the Inbox, restarting the loop until all queues are empty.
-
-### Source 1: User Input (human → agent)
+The TUI is a [Bubble Tea](https://github.com/charmbracelet/bubbletea) MVU
+loop. Three input sources feed the agent inbox; the agent's outbox produces
+events that mutate the TUI model.
 
 ```
-KeyMsg
-  │
-  ├─ Modal active? ──→ delegate to approval/plan/question  (TUI-local)
-  ├─ Overlay active? ─→ delegate to selector               (TUI-local)
-  ├─ Special mode? ───→ image/suggestion/queue navigation   (TUI-local)
-  ├─ Shortcut? ───────→ Esc/Ctrl+C/Ctrl+T/...              (TUI-local)
-  │
-  └─ Enter (Submit)
-       │
-       ├─ turnActive? ──→ enqueue(input)     (queued → drained at OnTurn)
-       ├─ hook blocked? ─→ addNotice         (rejected)
-       ├─ isCommand? ────→ dispatchCommand   (TUI-local or feature trigger)
-       │
-       └─ message
-            prepareUserMessage(input, images)
-            conv.Append(userMsg)
-            ensureAgentSession()
-            sendToAgent() ──→ Agent Inbox
+   Source 1 (User)         Source 2 (Agents)        Source 3 (System)
+   submit                  agentDone                cronTick
+   slash command           sendMsg                  asyncHook callback
+   modal response          selfInject               file watcher
+            \                    |                       /
+             \___________________|______________________/
+                                 |
+                          sendToAgent()
+                                 v
+                  ┌────────────────────────────┐
+                  │           Agent            │
+                  │   Inbox  →  Run  →  Outbox │
+                  │   LLM  ↔  Tool  ↔  LLM ... │
+                  └──────────────┬─────────────┘
+                                 |
+                                 v
+                          TUI observation
+                  (conv view, permission bridge,
+                   token tracker, status line)
 ```
 
-### Agent Output (outbox → Model → View)
+- Source 1 routes through `internal/app/input/`.
+- Source 2 routes through `internal/app/hub/` (event bus).
+- Source 3 routes through `internal/app/trigger/`.
+- Output side renders through `internal/app/conv/`.
+
+The detailed walkthrough (sub-model conventions, runtime adapters, cmd
+chains, directory structure of `internal/app/`) lives in
+[`packages/ui.md`](packages/ui.md).
+
+## Layer Model
+
+Code is divided into five layers with a single allowed dependency direction:
 
 ```
-AgentOutboxMsg
-  ├─ PreInfer  → conv.stream.active = true, commit pending
-  ├─ OnChunk   → conv.AppendToLast(text, thinking)
-  ├─ PostInfer → update token counts, set tool calls
-  ├─ PreTool   → conv.stream.buildingTool = name
-  ├─ PostTool  → applySideEffects, conv.Append(toolResult)
-  ├─ OnTurn    → stop stream, commit, save session, fire hooks
-  └─ OnStop    → cleanup agent session
+cmd  →  app  →  feature  →  core  →  infrastructure
 ```
 
-### Cmd Chains (side effects)
+| Layer | Members |
+| --- | --- |
+| `cmd` | `cmd/*` |
+| `app` | `internal/app` and subpackages |
+| `feature` | Business-domain packages (agent, hook, skill, plugin, mcp, llm, tool, task, subagent, session, command, cron, identity, inspector, search, worktree, setting, reminder) |
+| `core` | `internal/core` |
+| `infrastructure` | `internal/{log,secret,filecache,markdown,image}` |
 
-`tea.Cmd` runs async, returns a `tea.Msg`, which feeds back into `Update()`. Chains form loops.
+Full membership list and allowed-edge rules live in
+[`reference/dependency-rules.md`](reference/dependency-rules.md) and
+[`reference/package-map.md`](reference/package-map.md). Both files are the
+source of truth — update them together when a package moves or a new package
+is added.
 
-**Persistent loops** (run continuously while agent is active):
+## Where to Read Next
 
-| Chain | Cmd → Msg → next Cmd | Location |
-|-------|----------------------|----------|
-| Outbox poll | `DrainAgentOutbox()` → `AgentOutboxMsg` → `DrainAgentOutbox()` | conv/runtime.go |
-| Perm bridge | `PollPermBridge()` → `PermBridgeMsg` → `PollPermBridge()` | conv/runtime.go |
-| Tick timers | `StartTicker()` → `TickMsg` → `StartTicker()` | trigger/ |
+| Want to understand… | Read |
+|---|---|
+| One specific package | [`packages/<name>.md`](packages/) |
+| A cross-cutting concept (extension model, prompt slots, permissions) | [`concepts/`](concepts/) |
+| A fact (slash command list, config field, env var, token limits) | [`reference/`](reference/) |
+| Why a decision was made | [`decisions/`](decisions/) |
+| How to accomplish a task | [`guides/`](guides/) |
+| Build, test, release the repo | [`operations/`](operations/) |
 
-**Key one-shot chains**:
-- **Submit**: `HandleSubmit()` → `sendToAgent()` → starts outbox + perm loops if first message
-- **Turn end**: `OnTurn` → `drainTurnQueues()` → pops Source 1/2/3 queues → `sendToAgent()` or back to outbox loop
-- **Tool exec**: `PreTool` → `ExecuteApproved()` → `ToolResultMsg` → back to agent
+## Change Rule
 
-**Placement**: each sub-model owns its Cmd factories. Cross-cutting Cmds (`sendToAgent()`, `drainTurnQueues()`) live in root.
+When a change alters package responsibility, dependency direction, runtime
+flow, or extension behavior, update the corresponding document in the same
+pull request.
 
-## App Structure
-
-### First Principle
-
-Root is **pure glue** — it defines the composite Model, routes messages, composes views, and implements Runtime adapters. All business logic lives in sub-models. If a root file can't be named in two words, the logic belongs in a sub-model.
-
-### Sub-model Convention
-
-Each sub-model package is a self-contained MVU unit:
-
-| File | Rule |
-|------|------|
-| `model.go` | State definition. All fields the package owns live here. |
-| `update.go` | `Update()` entry point. Routes msgs to handlers. Returns `(tea.Cmd, bool)`. |
-| `view.go` | Pure render. Reads Model, returns string. |
-| `runtime.go` | Runtime interface — the only way to call up to root. Never import root. |
-| `on_*.go` | Component files. Each `on_` file owns one component's state + update + view. |
-| `*.go` | Data structures and renderers (no `on_` prefix) in non-input packages like `conv/`. |
-
-Root implements each sub-model's Runtime via adapter methods on `*model` in `model.go`.
-
-**Env**: app-local TUI state (`env`) lives in `app/env.go` — provider snapshot, permissions, plan, cache. Pure state holder with no singleton dependencies.
-
-**Services**: domain service singletons (`services`) live in `app/services.go` — 14 interface-typed fields injected at model construction via `newServices()`. Model methods access services through `m.services.*`, never through package-level `Default()` calls at runtime. Sub-models never import services directly — they receive needed references through Deps structs that root assembles and passes in.
-
-### Root Model
-
-```go
-type model struct {
-    // Sub-models (one per event source / concern)
-    userInput   input.Model      // Source 1: user keyboard → textarea, selectors, approval
-    eventHub *hub.Hub            // Source 2: pure pub/sub event routing
-    events   chan hub.Event      // Buffered channel, consumer-owned, drained at turn boundaries
-    systemInput trigger.Model    // Source 3: cron / async hook / file watcher → event queue
-    conv        conv.Model       // Agent Outbox: outbox events → conversation state → chat render
-    env         env              // App-local TUI state: provider, permissions, plan, cache, cwd
-    services    services         // Domain service singletons, injected at construction
-}
-```
-
-### Update — Root is Just a Switch
-
-```go
-func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-    switch msg := msg.(type) {
-    case tea.KeyMsg:                 return m, m.handleKeypress(msg)
-    case stopHookResultMsg:          return m, m.handleStopHookResult(msg)
-    // ...
-    }
-    if cmd, handled := m.routeFeatureUpdate(msg); handled {
-        return m, cmd
-    }
-    return m, m.updateTextarea(msg)
-}
-```
-
-Inter-agent events don't arrive via `tea.Msg`. The Hub routes events to the main subscriber's delivery function, which pushes to a Go channel. The channel is drained at turn boundaries in `drainTurnQueues()`.
-
-Cross-cutting coordination is **msg routing**, not business logic. Each `case` is 1-2 lines — take a msg from one sub-model, hand it to another.
-
-### View — Just Compose
-
-```
-View()
-  ├── m.conv.View()       → chat messages, streaming, tool results
-  ├── m.conv.TrackerView()→ background task progress
-  ├── m.input.View()      → textarea + image indicators
-  └── renderModeStatus()   → status bar: mode, model, tokens
-```
-
-### Directory Structure
-
-Each file is annotated with its MVU role: **[M]** model/state, **[U]** update, **[V]** view, **[C]** cmd (side effect factory). Files with multiple roles are listed left to right by importance.
-
-```
-internal/app/
-│
-│  ── Root: pure glue (8 files) ─────────────────────────────────────────────
-│  No business logic. Model + services + routing + view + env + agent lifecycle + entrypoint + init.
-│  Cross-cutting Cmds: sendToAgent(), drainTurnQueues()
-│
-├── model.go      [M,C] Model{env, services, 4 sub-models}, Init()
-│                       conv.Runtime event handlers, session persistence, turn queue drain, deps builders
-├── agent.go        [C] Agent session lifecycle: delegates to services.Agent.
-│                       buildAgentParams(), ensureAgentSession(), sendToAgent(), ContinueOutbox()
-│                       ReconfigureAgentTool() wires subagent executor into tool registry.
-├── services.go     [M] services: domain service singletons (14 fields), injected at model construction.
-│                       newServices() snapshots all Default() calls. refreshAfterReload() re-snapshots
-│                       the 5 services replaced by Initialize() during plugin reload.
-├── env.go          [M] env: app-local TUI state only (provider, permissions, plan, cache).
-│                       Pure state holder — no singleton service dependencies.
-│                       Sub-models never import it — they receive needed state through Deps structs.
-├── update.go       [U] Update(): msg type switch → delegate to sub-models
-│                       Cross-cutting = routing: SubmitMsg → agent, PermReq → input, ...
-├── view.go         [V] View(): compose sub-model views into terminal layout
-├── run.go             Run(): tea.Program setup, entrypoint
-├── init.go            Global infrastructure init, plugin/mcp adapters
-│
-│  ── input/ ── Source 1: User Input ────────────────────────────────────────
-│  Event: tea.KeyMsg
-│  Flow:  keyboard → textarea | selector | approval
-│         Enter → SubmitMsg → root routes to agent
-│         /cmd  → CommandMsg → root dispatches effect
-│
-├── input/
-│   ├── model.go              [M] Model{Textarea, History, Images, Queue, Selectors}
-│   ├── update.go             [U] Update(): routes to active overlay or textarea
-│   ├── view.go               [V] RenderTextarea(), image indicators
-│   ├── runtime.go            [M] OverlayDeps struct for overlay handler dependency injection
-│   ├── submit.go             [C] HandleSubmit(), DrainInputQueue(), ExecuteSubmitRequest()
-│   ├── command_controller.go [C] CommandController: slash command dispatch + all /cmd handlers
-│   ├── approval_flow.go      [C] HandlePermissionRequest(), DispatchPermissionHookAsync()
-│   ├── prompt_suggestion.go  [C] StartPromptSuggestion(), SuggestPromptCmd()
-│   ├── on_textarea.go      [U,C] HandleTextareaUpdate(), HandleSuggestionKey()
-│   ├── on_queue.go          [M,U] Queue: Enqueue(), Dequeue(), selection state
-│   ├── on_image.go            [U] HandleImageSelectKey()
-│   ├── on_approval.go      [M,U,V] ApprovalModel: Show() → HandleKeypress()
-│   ├── on_approval_bash.go     [V] bash command preview
-│   ├── on_approval_diff.go     [V] file diff preview
-│   ├── on_agent.go          [M,U,V] AgentSelector
-│   ├── on_provider.go       [M,U,V,C] ProviderSelector + connect/auth Cmds
-│   ├── on_plugin.go         [M,U,V,C] PluginSelector + install/sync Cmds
-│   ├── on_mcp.go            [M,U,V,C] MCPSelector + connect/reconnect Cmds
-│   ├── on_session.go        [M,U,V,C] SessionSelector + load/fork Cmds
-│   ├── on_memory.go         [M,U,V,C] MemorySelector + editor Cmds
-│   ├── on_skill.go          [M,U,V] SkillSelector
-│   ├── on_search.go         [M,U,V,C] SearchSelector
-│   ├── on_tool_selector.go  [M,U,V] ToolSelector
-│   └── on_token_limits.go       [C] Token limit fetch Cmd
-│
-│  ── hub/ ── Source 2: Inter-Agent Events ──────────────────────────────────
-│  Hub: pure pub/sub — map[string]func(Event), ~30 lines. Producers call
-│  Publish(). Hub routes to subscriber's delivery function. Main subscriber
-│  pushes to a Go channel (consumer-owned), drained at turn boundaries.
-│
-├── hub/
-│   ├── hub.go                [M] Hub{subs}, Register(), Unregister(), Publish()
-│   ├── format.go             [M] Message, TaskMessage(), Merge(), TaskSubject()
-│   └── tracker.go            [M] TrackWorker(), CompleteWorker() — background task tracker
-│
-│  ── trigger/ ── Source 3: System Events ───────────────────────────────────
-│  Event: cron tick | async hook callback | file watcher
-│  Flow:  event → queue → tick → sendToAgent()
-│  Cmd chain: StartCronTicker() → TickMsg → handleCronTick() → StartCronTicker() (loop)
-│
-├── trigger/
-│   ├── model.go              [M] Model{CronQueue, AsyncHookQueue}
-│   ├── update.go           [U,C] Update(), handleCronTick(), StartCronTicker(), StartAsyncHookTicker()
-│   └── file_watcher.go       [C] NewFileWatcher(), SetPaths(), poll()
-│
-│  ── conv/ ── Agent Outbox → Conversation ──────────────────────────────────
-│  Event: core.Event from Agent Outbox channel
-│  Flow:  DrainOutbox() → OutboxMsg → handleAgentEvent()
-│         PreInfer → OnChunk → PostInfer → PreTool → PostTool → OnTurn
-│  Cmd chains: DrainAgentOutbox() (loop), PollPermBridge() (loop)
-│
-├── conv/
-│   ├── model.go              [M] Model{ConversationModel, OutputModel} composite
-│   ├── update.go           [U,C] Update() entry, handleAgentEvent(): PreInfer/.../OnTurn dispatch
-│   ├── runtime.go          [M,C] Runtime interface, AgentOutboxMsg, DrainAgentOutbox()
-│   ├── view.go               [V] RenderMessageRange(), RenderActiveContent()
-│   ├── conversation.go       [M] Append(), ConvertToProvider(), StreamState
-│   ├── compact.go           [M,C] CompactState, CompactCmd()
-│   ├── tool.go              [M,C] ToolExecState, ExecuteApproved()
-│   ├── tool_render.go         [V] Tool result rendering
-│   ├── modal.go               [M] ModalState type definitions
-│   ├── plan.go              [M,U,V] PlanPrompt: Show() → PlanResponseMsg
-│   ├── question.go          [M,U,V] QuestionPrompt: Show() → QuestionResponseMsg
-│   ├── enterplan.go         [M,U,V] EnterPlanPrompt: Show() → EnterPlanResponseMsg
-│   ├── message.go             [V] RenderAssistantMessage(), RenderUserMessage()
-│   ├── markdown.go            [V] MDRenderer: Render()
-│   ├── progress.go          [M,C] ProgressHub: SendForAgent(), Check()
-│   ├── tracker_view.go        [V] RenderTrackerList(), task/batch/worker rendering
-│   └── permission_bridge.go [M,C] PermissionBridge, PermBridgeMsg, PollPermBridge()
-│
-│  ── Shared ────────────────────────────────────────────────────────────────
-│
-└── kit/
-    ├── suggest/             autocomplete engine
-    ├── history/             input history
-    ├── theme.go, styles.go  colors, lipgloss styles
-    ├── listnav.go           list navigation helpers
-    ├── editor.go            external editor integration
-    └── msg.go, save_level.go, util.go
-```
-
-## Package Dependencies
-
-```
-cmd/gen/              CLI entrypoint
-internal/app/         TUI layer (this document)
-internal/core/        Agent interface: Inbox/Outbox/Run, Event types, Message
-internal/llm/         LLM providers (Anthropic, OpenAI, Google, ...)
-internal/tool/        Tool registry and execution
-internal/hook/        Event hook system (depends on setting/ for env vars; LLM completer injected by app/)
-internal/setting/     Settings and permissions
-internal/...          ...
-```
-
-Dependency direction: `cmd/ → app/ → {core/, llm/, tool/, hook/, setting/, ...}`.
-Domain packages never import `app/`.
-
-**Lateral dependencies** (same-layer, documented):
-- `hook/` → `setting/` (env var resolution)
-- `session/` → `task/tracker` (serializes tracker tasks into transcripts)
-
-**Decoupled via function injection** (no direct import):
-- `hook/` ← `app/` — `hook.LLMCompleter` injected at init via `runtime.BuildHookCompleter`
-
-**Decoupled via callback injection** (no direct import):
-- `mcp/` ↔ `plugin/` — `mcp.Initialize(cwd, pluginServersCallback)`
-- `subagent/` ↔ `plugin/` — `subagent.Initialize(cwd, pluginAgentPathsCallback)`
-
-
+- Adding or moving a top-level package: update
+  [`reference/package-map.md`](reference/package-map.md) and
+  [`reference/dependency-rules.md`](reference/dependency-rules.md).
+- Changing a package's public interface: update
+  [`packages/<name>.md`](packages/) Contract section.
+- Adding a new cross-cutting concept: write a
+  [`concepts/`](concepts/) page; do not bury it inside one package doc.

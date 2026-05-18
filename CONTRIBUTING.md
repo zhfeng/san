@@ -52,7 +52,7 @@ Transcript/session focused suites:
 GOCACHE=/tmp/gocache go test ./internal/transcriptstore ./internal/app/session ./tests/integration/session/... ./tests/integration/cli/...
 ```
 
-Transcript storage layout, recording rules, and the event model are documented in `docs/inspector.md`.
+Transcript storage layout, recording rules, and the event model are documented in `docs/packages/session.md`.
 
 ### Debug Mode
 

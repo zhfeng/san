@@ -49,6 +49,10 @@ format-check: check-format-tools
 lint:
 	go vet ./...
 	@$(MAKE) format-check
+	@$(MAKE) lint-layers
+
+lint-layers:
+	@go run ./tools/layercheck
 
 test:
 	go test ./...
