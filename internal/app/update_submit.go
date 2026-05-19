@@ -1,10 +1,14 @@
-// Submit flow: handle Enter (HandleSubmit), build the SubmitDeps the input
-// package needs, kick off a provider turn (StartProviderTurn), and the
-// matching skill-invocation path that's the same flow but seeded by a
-// skill button instead of typed text.
+// Submit dispatch — what happens when the user presses Enter.
+//
+// The whole path lives in this file. Every step is annotated with its
+// numbered position in the flow so a reader can follow Enter → agent
+// without jumping packages.
 package app
 
 import (
+	"context"
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/genai-io/gen-code/internal/app/input"
@@ -13,25 +17,141 @@ import (
 	"github.com/genai-io/gen-code/internal/plugin"
 )
 
+// handleSubmit is the Enter handler. The dispatch follows this shape:
+//
+//	Step 1: read textarea, early-exit on empty
+//	Step 2: if a turn is already streaming, queue this input and stop
+//	Step 3: otherwise hand off to dispatchSubmission for the normal path
 func (m *model) handleSubmit() tea.Cmd {
-	return input.HandleSubmit(m.submitDeps())
-}
+	m.userInput.PromptSuggestion.Clear()
 
-func (m *model) submitDeps() input.SubmitDeps {
-	return input.SubmitDeps{
-		Actions:         m,
-		Input:           &m.userInput,
-		Conversation:    &m.conv.ConversationModel,
-		CheckPromptHook: m.checkPromptHook,
-		Cwd:             m.env.CWD,
-		HandleCommand: func(text string) (tea.Cmd, bool) {
-			ctrl := input.NewCommandController(m.commandDeps())
-			return ctrl.HandleSubmit(text)
-		},
-		ClearPluginRoot: plugin.ClearActivePluginRoot,
+	// Step 1: read raw input.
+	raw := strings.TrimSpace(m.userInput.FullValue())
+	if raw == "" && len(m.userInput.Images.Pending) == 0 {
+		return nil
 	}
+
+	// Step 2: if a turn is currently streaming, park the input in the
+	// queue and wait. The queue is drained at turn-boundary or after
+	// stream cancel.
+	if m.conv.Stream.Active {
+		log.QueueLog("handleSubmit: stream active, enqueue %q", raw)
+		return m.enqueueWhileStreaming(raw)
+	}
+
+	// Step 3: stream is idle — run the full submission pipeline.
+	log.QueueLog("handleSubmit: stream idle, normal submit %q", raw)
+	m.conv.Compact.ClearResult()
+	return m.dispatchSubmission(raw)
 }
 
+// enqueueWhileStreaming parks the input in the queue and resets the
+// textarea. The queued item is dequeued either by drainInputQueueAfterCancel
+// (on stream cancel) or by drainTurnQueues (at turn boundary).
+func (m *model) enqueueWhileStreaming(raw string) tea.Cmd {
+	images := m.userInput.PendingImages()
+	if m.userInput.Queue.Enqueue(raw, images) < 0 {
+		m.conv.AddNotice("Input queue is full. Please wait for the current turn to complete.")
+		return nil
+	}
+	m.userInput.Reset()
+	log.QueueLog("enqueueWhileStreaming: queued %q queueLen=%d", raw, m.userInput.Queue.Len())
+	return nil
+}
+
+// dispatchSubmission runs the actual submission pipeline. Shared by the
+// Enter handler (handleSubmit) and the queue drain that runs after
+// stream cancel (drainInputQueueAfterCancel).
+//
+//	Step 1: "exit" literal → quit
+//	Step 2: prompt hook gate → block with notice if rejected
+//	Step 3: record to input history before further branching
+//	Step 4: slash command? hand to the slash controller (manages its own
+//	        textarea + conv state)
+//	Step 5: provider turn — build user message (with image refs), append
+//	        to conv, reset textarea, kick off the agent turn
+func (m *model) dispatchSubmission(raw string) tea.Cmd {
+	// Step 1: exit literal.
+	if input.IsExitRequest(raw) {
+		cmd, _ := m.QuitWithCancel()
+		return cmd
+	}
+
+	// Step 2: prompt hook gate.
+	if blocked, reason := m.checkPromptHook(context.Background(), raw); blocked {
+		m.conv.Append(core.ChatMessage{Role: core.RoleNotice, Content: "Prompt blocked: " + reason})
+		m.userInput.Reset()
+		return tea.Batch(m.CommitMessages()...)
+	}
+
+	// Step 3: history.
+	m.userInput.RecordSubmission(m.env.CWD, raw)
+
+	// Step 4: slash command — controller owns its own state changes.
+	if cmd, handled := m.runSlashCommandIfMatched(raw); handled {
+		return cmd
+	}
+
+	// Step 5: provider turn.
+	plugin.ClearActivePluginRoot()
+	msg, ok := m.buildUserMessage(raw)
+	if !ok {
+		// image error notice already appended by buildUserMessage
+		return tea.Batch(m.CommitMessages()...)
+	}
+	m.conv.Append(msg)
+	m.userInput.Reset()
+	return m.StartProviderTurn(msg.Content)
+}
+
+// runSlashCommandIfMatched returns (cmd, true) if `raw` is a slash command
+// the controller handled, or (nil, false) if it should fall through to a
+// provider turn.
+func (m *model) runSlashCommandIfMatched(raw string) (tea.Cmd, bool) {
+	ctrl := input.NewCommandController(m.commandDeps())
+	return ctrl.HandleSubmit(raw)
+}
+
+// buildUserMessage resolves image references in raw text into a ChatMessage
+// ready to append. Returns ok=false if image resolution failed (in which
+// case a notice has already been appended to conv).
+func (m *model) buildUserMessage(raw string) (core.ChatMessage, bool) {
+	content, fileImages, err := input.ProcessImageRefs(m.env.CWD, raw)
+	if err != nil {
+		m.conv.Append(core.ChatMessage{Role: core.RoleNotice, Content: "Image error: " + err.Error()})
+		return core.ChatMessage{}, false
+	}
+	displayContent := content
+	content, inlineImages := m.userInput.ExtractInlineImages(content)
+	allImages := make([]core.Image, 0, len(inlineImages)+len(fileImages))
+	allImages = append(allImages, inlineImages...)
+	allImages = append(allImages, fileImages...)
+	return core.ChatMessage{
+		Role:           core.RoleUser,
+		Content:        content,
+		DisplayContent: displayContent,
+		Images:         allImages,
+	}, true
+}
+
+// drainInputQueueAfterCancel pops one queued item (if any) and runs it
+// through the normal submission pipeline. Called from handleStreamCancel
+// so a user who queued input while a turn was streaming sees the next one
+// run after Ctrl+C.
+func (m *model) drainInputQueueAfterCancel() tea.Cmd {
+	item, ok := m.userInput.Queue.Dequeue()
+	if !ok {
+		return nil
+	}
+	m.conv.Compact.ClearResult()
+	m.userInput.RestoreImages(item.Images)
+	return m.dispatchSubmission(item.Content)
+}
+
+// StartProviderTurn ensures the agent session is up and sends `content` to
+// its inbox. The returned cmd runs the agent's outbox poller; agent events
+// flow back through Update → routeFeatureUpdate → conv.Update → model
+// conv.Runtime callbacks (see model_agent_events.go).
 func (m *model) StartProviderTurn(content string) tea.Cmd {
 	log.QueueLog("StartProviderTurn: %q", truncate(content, 60))
 	if m.env.LLMProvider == nil {
@@ -66,6 +186,9 @@ func (m *model) StartProviderTurn(content string) tea.Cmd {
 	return sendCmd
 }
 
+// HandleSkillInvocation is the equivalent of dispatchSubmission for skill
+// button clicks. The skill provides the content (no textarea, no slash
+// detection); we still need to ensure the agent and send the message.
 func (m *model) HandleSkillInvocation() tea.Cmd {
 	if m.env.LLMProvider == nil {
 		m.conv.AddNotice("No provider connected. Use /model to connect.")

@@ -46,7 +46,6 @@ type model struct {
 
 var (
 	_ conv.Runtime          = (*model)(nil)
-	_ input.SubmitRuntime   = (*model)(nil)
 	_ input.ApprovalRuntime = (*model)(nil)
 )
 
