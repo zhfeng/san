@@ -4,9 +4,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-
-	"github.com/genai-io/gen-code/internal/hook"
-	"github.com/genai-io/gen-code/internal/llm"
 )
 
 // Registry manages agent type definitions
@@ -45,17 +42,6 @@ func (r *Registry) Get(name string) (*AgentConfig, bool) {
 	defer r.mu.RUnlock()
 	config, ok := r.agents[strings.ToLower(name)]
 	return config, ok
-}
-
-// List returns all registered agent names
-func (r *Registry) List() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	names := make([]string, 0, len(r.agents))
-	for name := range r.agents {
-		names = append(names, name)
-	}
-	return names
 }
 
 // ListConfigs returns all registered agent configurations
@@ -163,7 +149,8 @@ func (r *Registry) IsEnabled(name string) bool {
 	return true
 }
 
-// SetEnabled sets the enabled state for an agent at the specified level
+// SetEnabled sets the enabled state for an agent at the specified level.
+// Used by internal/app's agentRegistryAdapter.
 func (r *Registry) SetEnabled(name string, enabled bool, userLevel bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -182,7 +169,8 @@ func (r *Registry) SetEnabled(name string, enabled bool, userLevel bool) error {
 	return nil
 }
 
-// GetDisabledAt returns the disabled agents from the specified level
+// GetDisabledAt returns the disabled agents from the specified level.
+// Used by internal/app's agentRegistryAdapter.
 func (r *Registry) GetDisabledAt(userLevel bool) map[string]bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -264,20 +252,6 @@ func (r *Registry) GetAgentsSection() string {
 }
 
 // PromptSection returns the rendered prompt section for available agents.
-// Implements Service.PromptSection by delegating to GetAgentsSection.
 func (r *Registry) PromptSection() string {
 	return r.GetAgentsSection()
-}
-
-// NewExecutor creates a new agent executor.
-// Implements Service.NewExecutor by delegating to the package-level constructor.
-func (r *Registry) NewExecutor(provider llm.Provider, cwd string, parentModelID string, hookEngine hook.Handler) *Executor {
-	return NewExecutor(provider, cwd, parentModelID, hookEngine)
-}
-
-// Registry returns the receiver itself.
-// Implements Service.Registry, giving callers access to the concrete type
-// needed for adapter construction.
-func (r *Registry) Registry() *Registry {
-	return r
 }

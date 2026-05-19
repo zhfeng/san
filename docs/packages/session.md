@@ -64,23 +64,16 @@ func ResetDefaultSetup()         // test-only
 
 ### Why no interface
 
-The previous `session.Service` was an 11-method god union with a
-`GetStore() *Store` / `SetStore(*Store)` escape hatch — the same
-shape mcp.Service and hook.Service had before [#27](https://github.com/genai-io/gen-code/pull/27)
-and [#28](https://github.com/genai-io/gen-code/pull/28). Deleted in
-favor of the concrete `*Setup`.
+Consumers of session each use a different subset of `*Setup`'s
+surface (agent loop wants `NewRecorder` + `ID`; app composition root
+wants `Save` / `Load` / `LoadLatest` / `EnsureStore` / `SetID`; TUI
+selector and subagent session bridge want `*Store` directly). With no
+shared narrow surface a producer-side interface would just be
+`*Setup` renamed — TEMPLATE Rule 3.
 
-Two dead methods removed: `SetStore` and `List` had zero non-test
-callers.
-
-`GetStore()` stays — on a concrete type it's a plain getter, not an
-escape hatch. Callers that want `*Store` directly (TUI session
-selector, subagent session bridge) can read `m.services.Session.Store`
-or call `GetStore()`; both are equivalent.
-
-### Remaining Known Violations
-
-None.
+Callers that want `*Store` can read `m.services.Session.Store` (the
+exported field) or call `GetStore()` (mutex-protected); both are
+equivalent.
 
 ## Internals
 

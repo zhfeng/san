@@ -54,7 +54,7 @@ type Handler interface {
 // *Engine is the only implementation; satisfies Handler and carries
 // the Set* / status methods used by the app composition root and the
 // TUI view layer.
-type Engine struct { /* unexported */ }
+type Engine struct { /* internal fields */ }
 
 var _ Handler = (*Engine)(nil)
 
@@ -78,33 +78,13 @@ func SetDefaultEngine(e *Engine)   // test-only
 func ResetDefaultEngine()          // test-only
 ```
 
-### Why one interface, not the previous 16-method god `Service`
+### Why one interface
 
-The previous `hook.Service` bundled 16 methods (the largest god union
-in the repo) and forced an `Engine() *Engine` escape hatch because
-`SetAuditCallback` lived only on `*Engine`, not on `Service`.
-
-Deleting `Service` and exposing `*Engine` directly (with one role
-interface for the genuinely-narrow fire surface) drops:
-
-- The escape hatch — callers that need `SetAuditCallback` just use
-  `*Engine` like every other configurator.
-- Six **dead methods** with zero non-test callers: `FilterToolCalls`,
-  `Wait`, `AddSessionFunctionHook`, `AddRuntimeFunctionHook`,
-  `SetPromptCallback`, `SetEnvProvider`. `Wait` and `FilterToolCalls`
-  were deleted entirely; the other four stay on `*Engine` only as
-  test infrastructure (no production caller).
-- The two-flavor accessor pattern (`Default` panics, `DefaultIfInit`
-  is nil-tolerant). Replaced by a single `DefaultEngine()` that
-  returns an empty-but-non-nil engine until `Initialize` runs.
-
-`CurrentStatusMessage` does not get its own interface — one method
-with one caller (TUI view) is exactly the speculative abstraction
-[Rule 3](TEMPLATE.md#contract-rules) warns against.
-
-### Remaining Known Violations
-
-None.
+`Handler` captures the dominant caller pattern (8 cross-package
+consumers fire events and read outcomes). Everything else on `*Engine`
+— `Set*` knobs, `ClearSessionHooks`, `SetAuditCallback`,
+`CurrentStatusMessage` — has exactly one caller each. Single-caller
+methods don't earn an interface; TEMPLATE Rule 3.
 
 ## Internals
 

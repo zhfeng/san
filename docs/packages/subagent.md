@@ -21,43 +21,55 @@ tool result.
 
 ## Contract
 
+The package exposes the concrete `*Registry` directly. The four
+production caller sites use four different subsets of its surface, so
+no producer-side role interface earns its keep — TEMPLATE Rule 3.
+
+| Caller | Methods used |
+|---|---|
+| `cmd/gen agent` | `Get` (CLI argument validation) |
+| TUI view | `ListConfigs` (color enumeration) |
+| Agent build site | `PromptSection` (twice) |
+| TUI selector adapter | full surface — `ListConfigs`, `IsEnabled`, `SetEnabled`, `GetDisabledAt` for the `/agent` menu |
+
+Executor construction goes through the package-level `NewExecutor`
+free function (in `executor.go`), not a method on the registry. The
+free function takes `hook.Handler`, keeping subagent decoupled from
+the concrete `*hook.Engine`.
+
 ```go
 package subagent
 
-// Service is the public contract for the subagent module.
-type Service interface {
-    // query
-    ListConfigs() []*AgentConfig
-    Get(name string) (*AgentConfig, bool)
-    IsEnabled(name string) bool
-    GetDisabledAt(userLevel bool) map[string]bool
+// Registry is an opaque handle to the agent type registry. The type is
+// exported so callers can hold and pass *Registry values; all fields
+// are unexported so internal state is reached only through methods.
+type Registry struct { /* internal fields */ }
 
-    // mutation
-    SetEnabled(name string, enabled bool, userLevel bool) error
-    Register(config *AgentConfig)
+// Query
+func (r *Registry) ListConfigs() []*AgentConfig
+func (r *Registry) Get(name string) (*AgentConfig, bool)
+func (r *Registry) IsEnabled(name string) bool
 
-    // factory
-    NewExecutor(provider llm.Provider, cwd string, parentModelID string, hookEngine *hook.Engine) *Executor
+// State mutation (used by the TUI selector adapter)
+func (r *Registry) SetEnabled(name string, enabled bool, userLevel bool) error
+func (r *Registry) GetDisabledAt(userLevel bool) map[string]bool
 
-    // system prompt
-    PromptSection() string
+// System prompt
+func (r *Registry) PromptSection() string
 
-    // concrete access
-    Registry() *Registry
-}
+// Loader bootstrapping
+func (r *Registry) Register(config *AgentConfig)
+func (r *Registry) InitStores(cwd string) error
+
+// Executor construction (package-level free function)
+func NewExecutor(provider llm.Provider, cwd, parentModelID string, hooks hook.Handler) *Executor
+
+// Package-level access
+func Initialize(opts Options) error
+func Default() *Registry
+func SetDefaultRegistry(r *Registry)  // test-only
+func ResetDefaultRegistry()           // test-only
 ```
-
-### Known Violations
-
-- **Rule 1 (small).** 9 methods. Suggested split: `SubagentQuery`,
-  `SubagentStateStore`, `SubagentExecutorFactory`, `SubagentPrompt`.
-- **Rule 7 (no escape hatch).** `Registry() *Registry` defeats the
-  interface. Drop it.
-- **Rule 5.** `Default()` returns `Service`.
-- **`NewExecutor` takes a `*hook.Engine` directly.** Per
-  [`packages/hook.md`](hook.md) the hook package shouldn't be reached
-  through its concrete `*Engine` — accept `hook.Service` or a narrow
-  `HookExecutor` interface instead.
 
 ## Internals
 

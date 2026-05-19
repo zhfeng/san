@@ -29,7 +29,7 @@ type services struct {
 	Hook     *hook.Engine
 	Session  *session.Setup
 	Skill    skill.Service
-	Subagent subagent.Service
+	Subagent *subagent.Registry
 	Command  command.Service
 	Task     task.Service
 	Tracker  tracker.Service

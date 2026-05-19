@@ -1,37 +1,20 @@
+// Package subagent owns the registry of agent type definitions (markdown
+// files under ~/.gen/agents/ and <project>/.gen/agents/) plus the
+// *Executor that spawns one of them as a background core.Agent for a
+// single invocation.
+//
+// The package exposes the concrete *Registry directly — no Service
+// interface. The four production caller sites use four different
+// subsets of *Registry's surface (Get from cmd; ListConfigs from
+// view; PromptSection from agent.go; the whole registry from the TUI
+// selector via an adapter). No shared narrow surface → no role
+// interface earns its keep. TEMPLATE Rule 3.
+//
+// Executor construction goes through the package-level NewExecutor
+// free function (in executor.go), not through any method on *Registry.
 package subagent
 
-import (
-	"fmt"
-	"sync"
-
-	"github.com/genai-io/gen-code/internal/hook"
-	"github.com/genai-io/gen-code/internal/llm"
-)
-
-// Service is the public contract for the subagent module.
-type Service interface {
-	// query
-	ListConfigs() []*AgentConfig                  // all agent type definitions
-	Get(name string) (*AgentConfig, bool)         // lookup by name
-	IsEnabled(name string) bool                   // check if enabled
-	GetDisabledAt(userLevel bool) map[string]bool // disabled agents at level
-
-	// mutation
-	SetEnabled(name string, enabled bool, userLevel bool) error
-	Register(config *AgentConfig) // add an agent configuration
-
-	// factory
-	NewExecutor(provider llm.Provider, cwd string, parentModelID string, hookEngine hook.Handler) *Executor
-
-	// system prompt
-	PromptSection() string // rendered section for system prompt
-
-	// concrete access
-	Registry() *Registry // returns the underlying Registry for adapter construction
-}
-
-// Compile-time check: *Registry implements Service.
-var _ Service = (*Registry)(nil)
+import "fmt"
 
 // Options holds all dependencies for initialization.
 type Options struct {
@@ -54,40 +37,28 @@ func Initialize(opts Options) error {
 	if err := defaultRegistry.InitStores(opts.CWD); err != nil {
 		return fmt.Errorf("failed to initialize agent stores: %w", err)
 	}
-
-	SetDefault(defaultRegistry)
 	return nil
 }
 
-// ── singleton ──────────────────────────────────────────────
+// Default returns the package-level *Registry. The registry is
+// initialized to an empty state at package load and populated by
+// Initialize().
+func Default() *Registry {
+	return defaultRegistry
+}
 
-var (
-	mu       sync.RWMutex
-	instance Service
-)
-
-// Default returns the singleton Service instance.
-// Panics if Initialize has not been called.
-func Default() Service {
-	mu.RLock()
-	s := instance
-	mu.RUnlock()
-	if s == nil {
-		panic("subagent: not initialized")
+// SetDefaultRegistry replaces the package-level registry. Intended for
+// tests. A nil argument restores a fresh empty *Registry.
+func SetDefaultRegistry(r *Registry) {
+	if r == nil {
+		defaultRegistry = NewRegistry()
+		return
 	}
-	return s
+	defaultRegistry = r
 }
 
-// SetDefault replaces the singleton instance. Intended for tests.
-func SetDefault(s Service) {
-	mu.Lock()
-	instance = s
-	mu.Unlock()
-}
-
-// ResetService clears the singleton instance. Intended for tests.
-func ResetService() {
-	mu.Lock()
-	instance = nil
-	mu.Unlock()
+// ResetDefaultRegistry restores a fresh empty *Registry. Intended for
+// tests.
+func ResetDefaultRegistry() {
+	defaultRegistry = NewRegistry()
 }

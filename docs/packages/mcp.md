@@ -62,7 +62,7 @@ type Servers interface {
 
 // *Registry is the only implementation; covers the Manager role and
 // satisfies both interfaces above.
-type Registry struct { /* unexported */ }
+type Registry struct { /* internal fields */ }
 
 var (
     _ Tools   = (*Registry)(nil)
@@ -82,33 +82,19 @@ func SetDefaultRegistry(reg *Registry)   // test-only
 func ResetDefaultRegistry()              // test-only
 ```
 
-### Why these interfaces, not a god `Service`
+### Why two role interfaces, not one god union
 
-The previous `mcp.Service` interface bundled all four roles into a
-single 10-method bag. It had exactly one implementation and zero mocks,
-and most methods just renamed `*Registry` methods or wrapped existing
-free functions. By [TEMPLATE Rule 3](TEMPLATE.md#contract-rules)
-(small interfaces at the consumer side, no producer-side god unions)
-it was deleted.
+- Consumers that just list/call tools (agent loop, slash-command tool
+  selector, subagent) depend on `Tools` — two methods.
+- Consumers that browse and connect servers (`ConnectServers`,
+  subagent executor) depend on `Servers` — six methods.
+- The TUI `/mcp` selector mutates server state (`RemoveServer`,
+  `SetDisabled`, `SetConnectError`, …) and takes `*Registry` directly.
+  A 10-method interface here would just be `*Registry` renamed —
+  TEMPLATE Rule 1 says no.
 
-The replacement is **role interfaces**, not "no interfaces":
-
-- A consumer that just lists tools (`agent.go`, `slash_command.go`)
-  reads `Tools` — two methods.
-- A consumer that connects a curated server set (`ConnectServers`,
-  `subagent.Executor.SetMCP`) reads `Servers` — six methods.
-- A consumer that mutates server state (`MCPSelector` —
-  `RemoveServer`, `SetDisabled`, `SetConnectError`, …) genuinely needs
-  the wide surface and takes `*Registry` directly. Wrapping it in a
-  ten-method interface earns nothing — Rule 1 says no.
-
-`*Registry` is the implementation but **not** the public face of the
-package. Most documentation, most consumer code, and the most stable
-contract live on the role interfaces.
-
-### Remaining Known Violations
-
-None.
+`*Registry` is the implementation; role interfaces are the public face
+that callers narrow to.
 
 ## Internals
 

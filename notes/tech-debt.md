@@ -12,15 +12,17 @@ This file tracks structural follow-ups that are not tied to a single feature.
 
 - **God `Service` interfaces.** Split per the per-package suggestions:
   `plugin` (21), `setting` (14), `skill` (11), `agent` (11),
-  `cron` (10), `subagent` (9), `command` (7), `llm` (8), `task` (8),
-  `tool` (6). Define narrow consumer-defined interfaces alongside the
-  concrete `*service` / `*Registry`; let each call site narrow to
-  what it needs.
+  `cron` (10), `command` (7), `llm` (8), `task` (8), `tool` (6).
+  Define narrow consumer-defined interfaces alongside the concrete
+  `*service` / `*Registry`; let each call site narrow to what it needs.
   ~~`mcp` (9 methods)~~ — resolved (`Tools` + `Servers` + `*mcp.Registry`).
   ~~`hook` (16 methods)~~ — resolved (`Handler` + `*hook.Engine`).
   ~~`session` (11 methods)~~ — resolved by deleting `Service`, exposing
   `*session.Setup` directly. No role interface — consumers don't share
   a narrow common surface.
+  ~~`subagent` (9 methods)~~ — resolved by deleting `Service`,
+  exposing `*subagent.Registry` directly. No role interface — same
+  reason as session.
 - **Escape-hatch methods on Service interfaces.** All resolved:
   ~~`MCP.Registry()`~~, ~~`Hook.Engine()`~~, ~~`Session.GetStore()`~~
   / ~~`Session.SetStore()`~~ — Service interfaces deleted in their
