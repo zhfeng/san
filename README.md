@@ -16,18 +16,18 @@ Gen Code is a terminal coding assistant with pluggable LLM providers, search eng
 ### Open architecture
 
 <p align="center">
-  <img src="docs/open-architecture.svg" alt="Gen Code open architecture — four dimensions: model providers, search engines, role switching, and skills/extensions" width="100%">
+  <img src="docs/diagrams/open-architecture.svg" alt="Gen Code open architecture — four dimensions: model providers, search engines, role switching, and skills/extensions" width="100%">
 </p>
 
 - **LLM providers** — Anthropic, OpenAI, Google, Moonshot, Alibaba, MiniMax, Z.ai (GLM); swap via `/model`.
 - **Search backends** — Exa, Tavily, Brave, Serper; swap via `/search`.
-- **Personas** — Markdown identities scoped to user or project; swap via `/identity` ([details](docs/system-prompt.md#identity-custom-personas)).
+- **Personas** — Markdown identities scoped to user or project; swap via `/identity` ([details](docs/concepts/harness-channels.md#identity-custom-personas)).
 - **Skills & extensions** — Claude Code skills, plugins, and MCP servers run unmodified; sandboxed subagents; lifecycle hooks (shell, LLM, agent, HTTP); auto-loaded project memory.
 
 ### Engineering
 
 - **Native performance** — Single Go binary; see [benchmark](#benchmark-gencode-vs-claude-code) for measured numbers.
-- **Event-driven coordination** — Parallel subagent execution via a pub/sub hub ([architecture](docs/subagent.md)).
+- **Event-driven coordination** — Parallel subagent execution via a pub/sub hub ([architecture](docs/packages/subagent.md)).
 - **Session persistence** — Auto-save, resume, fork, and automatic context compaction.
 - **Prompt prediction** — Speculative completion of likely next prompts to reduce latency.
 
@@ -146,15 +146,17 @@ Compared with [Claude Code](https://claude.ai/code) v2.1.112 on Apple Silicon, s
 
 Both tools have comparable features (hooks, skills, plugins, session, MCP, etc.). The performance gap comes from Go's native compilation, minimal architecture design, and lean prompt engineering — vs Node.js V8/JIT/GC runtime overhead.
 
-See full details: [docs/benchmark-gencode-vs-claudecode.md](docs/benchmark-gencode-vs-claudecode.md)
+See full details: [docs/operations/benchmark.md](docs/operations/benchmark.md)
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — TUI MVU model and package layout
-- [System Prompt](docs/system-prompt.md) — Slot model, identity, skill/agent injection
-- [Subagents](docs/subagent.md) · [Skills](docs/skill-system.md) · [Plugins](docs/plugin-system.md) · [MCP](docs/mcp-servers.md)
-- [Hooks](docs/hook.md) · [Permissions](docs/gen-permission.md) · [Tasks](docs/task-management.md)
-- Per-feature notes under [`docs/features/`](docs/features/)
+- [Documentation Index](docs/index.md) — map of architecture, features, operations, and references
+- [Architecture](docs/architecture.md) — architecture entrypoint and reading order
+- [Package Map](docs/reference/package-map.md) — package ownership and dependency boundaries
+- [System Prompt](docs/concepts/harness-channels.md) — Slot model, identity, skill/agent injection
+- [Subagents](docs/packages/subagent.md) · [Skills](docs/packages/skill.md) · [Plugins](docs/packages/plugin.md) · [MCP](docs/packages/mcp.md)
+- [Hooks](docs/packages/hook.md) · [Permissions](docs/concepts/permission-model.md) · [Tasks](docs/packages/task.md)
+- Per-package design under [`docs/packages/`](docs/packages/) — start at [Package Index](docs/packages/index.md)
 
 ## Related Projects
 
