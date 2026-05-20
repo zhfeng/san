@@ -19,8 +19,20 @@ const ctrlODoubleTapWindow = 300 * time.Millisecond
 
 type ctrlOSingleTickMsg struct{}
 
-func (m *model) handleKeypress(msg tea.KeyMsg) (tea.Cmd, bool) {
-	if active, cmd := m.delegateToActiveModal(msg); active {
+// routeKeypress is the priority dispatcher for tea.KeyMsg. A keypress
+// flows through these layers in order; the first one that claims it wins:
+//
+//  1. tryActivePopup           — any open modal or slash-command picker
+//  2. HandleImageSelectKey     — image picker overlay inside textarea
+//  3. HandleSuggestionKey      — prompt-suggestion overlay inside textarea
+//  4. HandleQueueSelectKey     — queue-navigation mode inside textarea
+//  5. handleTextareaShortcut   — Ctrl-shortcuts + Tab/Enter/history
+//
+// Returns (cmd, true) if any layer consumed the key. Falling off the end
+// means "let the textarea consume it as text" — that's handled in
+// updateTextarea, not here.
+func (m *model) routeKeypress(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if active, cmd := m.tryActivePopup(msg); active {
 		return cmd, true
 	}
 
@@ -34,10 +46,15 @@ func (m *model) handleKeypress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return c, ok
 	}
 
-	return m.handleInputKey(msg)
+	return m.handleTextareaShortcut(msg)
 }
 
-func (m *model) handleInputKey(msg tea.KeyMsg) (tea.Cmd, bool) {
+// handleTextareaShortcut handles keys that target the textarea itself:
+// Ctrl-shortcuts (C/D/L/E/O/U/V/Y/T), Tab, Shift+Tab, Enter, Esc, and
+// arrow-key history navigation. Returns (cmd, true) if the key was a
+// recognized shortcut, (nil, false) to let the rune fall through to
+// updateTextarea as plain text input.
+func (m *model) handleTextareaShortcut(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch msg.Type {
 	case tea.KeyTab, tea.KeyRight:
 		if m.userInput.PromptSuggestion.Text != "" && m.userInput.Textarea.Value() == "" {
@@ -176,7 +193,12 @@ func (m *model) cycleThinkingEffort() tea.Cmd {
 	return kit.StatusTimer(3*time.Second, token)
 }
 
-func (m *model) delegateToActiveModal(msg tea.KeyMsg) (bool, tea.Cmd) {
+// tryActivePopup hands the keypress to whichever popup is currently
+// visible — the question modal, the approval modal, or one of the
+// slash-command pickers (provider, tools, skills, ...). At most one
+// popup is active at a time. Returns (true, cmd) if a popup consumed
+// the key.
+func (m *model) tryActivePopup(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.conv.Modal.Question.IsActive() {
 		cmd, resp := m.conv.Modal.Question.HandleKeypress(msg)
 		if resp != nil {
@@ -193,7 +215,7 @@ func (m *model) delegateToActiveModal(msg tea.KeyMsg) (bool, tea.Cmd) {
 		}
 		return true, cmd
 	}
-	for _, s := range m.overlaySelectors() {
+	for _, s := range m.popups() {
 		if s.IsActive() {
 			return true, s.HandleKeypress(msg)
 		}

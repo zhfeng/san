@@ -62,7 +62,12 @@ events that mutate the TUI model.
 
 The detailed walkthrough (sub-model conventions, runtime adapters, cmd
 chains, directory structure of `internal/app/`) lives in
-[`packages/ui.md`](packages/ui.md).
+[`packages/ui.md`](packages/ui.md). For the step-by-step trace from a
+keystroke (or cron fire, or hub event) through the agent and back to
+the terminal, see [`concepts/data-flow.md`](concepts/data-flow.md).
+For how rendered output is composed (View() layout, Markdown pipeline,
+tool blocks, scrollback vs repaint zone), see
+[`concepts/rendering.md`](concepts/rendering.md).
 
 ## Layer Model
 

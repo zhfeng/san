@@ -15,14 +15,18 @@ import (
 
 var ghostTextStyle = lipgloss.NewStyle().Foreground(kit.CurrentTheme.TextDim)
 
+// View dispatches to one of four layouts, top-down:
+//
+//  1. Loading splash (env not ready yet)
+//  2. Active popup (slash-command picker / etc.) — fullscreen
+//  3. Active modal (Question / Approval) — wrapped between separators
+//  4. Normal mode — chat section + status + input strip
 func (m *model) View() string {
 	if !m.env.Ready {
 		return "\n  Loading..."
 	}
-
-	// Render full-screen selectors if any are active.
-	if selectorView := m.renderOverlaySelector(); selectorView != "" {
-		return selectorView
+	if popupView := m.renderActivePopup(); popupView != "" {
+		return popupView
 	}
 
 	separator := conv.SeparatorStyle.Render(strings.Repeat("─", m.env.Width))
@@ -35,49 +39,49 @@ func (m *model) View() string {
 	if modalView := m.renderActiveModal(separator, trackerPrefix); modalView != "" {
 		return modalView
 	}
+	return m.renderNormalView(separator, trackerView)
+}
 
+// renderNormalView composes the standard layout: chat scrollback area,
+// turn-usage summary, queue preview, textarea + suggestions, and the
+// bottom status line.
+func (m *model) renderNormalView(separator, trackerView string) string {
 	activeContent := conv.RenderActiveContent(m.messageRenderParams())
-	inputView := m.renderInputView()
 	chatSection := m.renderChatSection(activeContent, trackerView)
-	turnUsage := conv.RenderTurnUsageSummary(m.env.TurnInputTokens, m.env.TurnOutputTokens, m.env.Width)
-	statusLine := m.renderModeStatus()
-	suggestions := m.userInput.Suggestions.Render(m.env.Width)
-	queuePreview := m.renderQueuePreview()
 
 	var view strings.Builder
 	if chatSection != "" {
 		view.WriteString(chatSection)
 	}
-	if turnUsage != "" {
+	if turnUsage := conv.RenderTurnUsageSummary(m.env.TurnInputTokens, m.env.TurnOutputTokens, m.env.Width); turnUsage != "" {
 		view.WriteString("\n")
 		view.WriteString(turnUsage)
 	}
 	view.WriteString("\n")
 	view.WriteString(separator)
-	if queuePreview != "" {
+	if queuePreview := m.renderQueuePreview(); queuePreview != "" {
 		view.WriteString("\n")
 		view.WriteString(queuePreview)
 	}
 	view.WriteString("\n")
-	view.WriteString(inputView)
-	if suggestions != "" {
+	view.WriteString(m.renderInputView())
+	if suggestions := m.userInput.Suggestions.Render(m.env.Width); suggestions != "" {
 		view.WriteString("\n")
 		view.WriteString(suggestions)
 	}
 	view.WriteString("\n")
 	view.WriteString(separator)
 	view.WriteString("\n")
-	if statusLine != "" {
+	if statusLine := m.renderModeStatus(); statusLine != "" {
 		view.WriteString(statusLine)
 	} else {
 		view.WriteString(" ")
 	}
-
 	return view.String()
 }
 
-func (m *model) renderOverlaySelector() string {
-	for _, s := range m.overlaySelectors() {
+func (m *model) renderActivePopup() string {
+	for _, s := range m.popups() {
 		if s.IsActive() {
 			return s.Render()
 		}
@@ -194,24 +198,36 @@ func (m model) renderQueuePreview() string {
 	return strings.TrimSuffix(conv.RenderQueuePreview(previews, m.userInput.Queue.SelectIdx, m.env.Width), "\n")
 }
 
-func (m model) messageRenderParams() conv.MessageRenderParams {
-	return conv.MessageRenderParams{
-		Messages:                m.conv.Messages,
-		CommittedCount:          m.conv.CommittedCount,
-		StreamActive:            m.conv.Stream.Active,
-		BuildingTool:            m.conv.Stream.BuildingTool,
-		PendingCalls:            m.conv.Tool.PendingCalls,
-		CurrentIdx:              m.conv.Tool.CurrentIdx,
-		ModelName:               m.env.GetModelID(),
-		InputTokens:             m.env.InputTokens,
-		OutputTokens:            m.env.OutputTokens,
-		Blink:                   m.conv.Blink,
-		AgentColors:             m.agentColors(),
-		Width:                   m.env.Width,
-		MDRenderer:              m.conv.MDRenderer,
-		SpinnerView:             m.conv.Spinner.View(),
-		TaskProgress:            m.conv.TaskProgress,
-		TaskOwnerMap:            buildTaskOwnerMap(m.services.Tracker.List()),
+func (m model) messageRenderParams() conv.RenderContext {
+	return conv.RenderContext{
+		// Conversation state
+		Messages:       m.conv.Messages,
+		CommittedCount: m.conv.CommittedCount,
+		InlinedResults: conv.PrecomputeInlinedResults(m.conv.Messages),
+
+		// Streaming + tool execution
+		StreamActive: m.conv.Stream.Active,
+		BuildingTool: m.conv.Stream.BuildingTool,
+		PendingCalls: m.conv.Tool.PendingCalls,
+		CurrentIdx:   m.conv.Tool.CurrentIdx,
+
+		// Renderer env
+		Width:      m.env.Width,
+		MDRenderer: m.conv.MDRenderer,
+
+		// Per-tick UI state
+		SpinnerView:  m.conv.Spinner.View(),
+		Blink:        m.conv.Blink,
+		ModelName:    m.env.GetModelID(),
+		InputTokens:  m.env.InputTokens,
+		OutputTokens: m.env.OutputTokens,
+
+		// Decorations
+		AgentColors:  m.agentColors(),
+		TaskProgress: m.conv.TaskProgress,
+		TaskOwnerMap: buildTaskOwnerMap(m.services.Tracker.List()),
+
+		// Modal interlock
 		InteractivePromptActive: m.conv.Modal.Question != nil && m.conv.Modal.Question.IsActive(),
 	}
 }

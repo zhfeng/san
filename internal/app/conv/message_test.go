@@ -236,7 +236,7 @@ func TestRenderActiveContentShowsRunningStateForPendingWebFetch(t *testing.T) {
 		Name:  "WebFetch",
 		Input: `{"url":"https://github.com/features/copilot/plans"}`,
 	}
-	params := MessageRenderParams{
+	params := RenderContext{
 		Messages: []core.ChatMessage{{
 			Role:      core.RoleAssistant,
 			ToolCalls: []core.ToolCall{call},
@@ -246,6 +246,7 @@ func TestRenderActiveContentShowsRunningStateForPendingWebFetch(t *testing.T) {
 		SpinnerView:  "⋯",
 		Width:        100,
 	}
+	params.InlinedResults = PrecomputeInlinedResults(params.Messages)
 
 	rendered := RenderActiveContent(params)
 	if !strings.Contains(rendered, "⋯ WebFetch(https://github.com/features/copilot/plans)") {

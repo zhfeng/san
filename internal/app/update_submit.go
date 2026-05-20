@@ -1,63 +1,148 @@
-// Submit flow: handle Enter (HandleSubmit), build the SubmitDeps the input
-// package needs, kick off a provider turn (StartProviderTurn), and the
-// matching skill-invocation path that's the same flow but seeded by a
-// skill button instead of typed text.
+// Submit dispatch — what happens when the user presses Enter, plus the
+// single SubmitToAgent exit point that every input path funnels through.
+// Lives entirely on *model so a reader can follow Enter → agent without
+// jumping packages.
 package app
 
 import (
+	"context"
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/genai-io/gen-code/internal/app/input"
 	"github.com/genai-io/gen-code/internal/core"
 	"github.com/genai-io/gen-code/internal/log"
-	"github.com/genai-io/gen-code/internal/plugin"
 )
 
+// handleSubmit is the Enter handler. Reads the textarea; if a turn is
+// already streaming, queues for later; otherwise runs the submission
+// pipeline.
 func (m *model) handleSubmit() tea.Cmd {
-	return input.HandleSubmit(m.submitDeps())
-}
+	m.userInput.PromptSuggestion.Clear()
 
-func (m *model) submitDeps() input.SubmitDeps {
-	return input.SubmitDeps{
-		Actions:         m,
-		Input:           &m.userInput,
-		Conversation:    &m.conv.ConversationModel,
-		CheckPromptHook: m.checkPromptHook,
-		Cwd:             m.env.CWD,
-		HandleCommand: func(text string) (tea.Cmd, bool) {
-			ctrl := input.NewCommandController(m.commandDeps())
-			return ctrl.HandleSubmit(text)
-		},
-		ClearPluginRoot: plugin.ClearActivePluginRoot,
+	raw := strings.TrimSpace(m.userInput.FullValue())
+	if raw == "" && len(m.userInput.Images.Pending) == 0 {
+		return nil
 	}
+
+	if m.conv.Stream.Active {
+		log.QueueLog("handleSubmit: stream active, enqueue %q", raw)
+		return m.enqueueWhileStreaming(raw)
+	}
+
+	log.QueueLog("handleSubmit: stream idle, normal submit %q", raw)
+	m.conv.Compact.ClearResult()
+	return m.dispatchSubmission(raw)
 }
 
-func (m *model) StartProviderTurn(content string) tea.Cmd {
-	log.QueueLog("StartProviderTurn: %q", truncate(content, 60))
-	if m.env.LLMProvider == nil {
-		m.conv.Append(core.ChatMessage{
-			Role:    core.RoleNotice,
-			Content: "No provider connected. Use /model to connect.",
-		})
+// enqueueWhileStreaming parks the input in the queue and resets the
+// textarea. The queued item is dequeued either by drainInputQueueAfterCancel
+// (on stream cancel) or by drainTurnQueues (at turn boundary).
+func (m *model) enqueueWhileStreaming(raw string) tea.Cmd {
+	images := m.userInput.PendingImages()
+	if m.userInput.Queue.Enqueue(raw, images) < 0 {
+		m.conv.AddNotice("Input queue is full. Please wait for the current turn to complete.")
+		return nil
+	}
+	m.userInput.Reset()
+	log.QueueLog("enqueueWhileStreaming: queued %q queueLen=%d", raw, m.userInput.Queue.Len())
+	return nil
+}
+
+// dispatchSubmission runs the submission pipeline: exit shortcut →
+// prompt-hook gate → history → slash command? → otherwise send to
+// agent. Shared by the Enter handler and drainInputQueueAfterCancel.
+func (m *model) dispatchSubmission(raw string) tea.Cmd {
+	if input.IsExitRequest(raw) {
+		cmd, _ := m.QuitWithCancel()
+		return cmd
+	}
+
+	if blocked, reason := m.checkPromptHook(context.Background(), raw); blocked {
+		m.conv.AddNotice("Prompt blocked: " + reason)
+		m.userInput.Reset()
 		return tea.Batch(m.CommitMessages()...)
+	}
+
+	m.userInput.RecordSubmission(m.env.CWD, raw)
+
+	if cmd, handled := m.runSlashCommandIfMatched(raw); handled {
+		return cmd
+	}
+
+	msg, ok := m.buildUserMessage(raw)
+	if !ok {
+		return tea.Batch(m.CommitMessages()...)
+	}
+	m.conv.Append(msg)
+	m.userInput.Reset()
+	return m.SubmitToAgent(msg.Content, msg.Images)
+}
+
+// runSlashCommandIfMatched returns (cmd, true) if `raw` is a slash command
+// the controller handled, or (nil, false) if it should fall through to a
+// provider turn.
+func (m *model) runSlashCommandIfMatched(raw string) (tea.Cmd, bool) {
+	ctrl := input.NewSlashCommandController(m.slashCommandEnv())
+	return ctrl.HandleSubmit(raw)
+}
+
+// buildUserMessage resolves image references in raw text into a ChatMessage
+// ready to append. Returns ok=false if image resolution failed (in which
+// case a notice has already been appended to conv).
+func (m *model) buildUserMessage(raw string) (core.ChatMessage, bool) {
+	content, fileImages, err := input.ProcessImageRefs(m.env.CWD, raw)
+	if err != nil {
+		m.conv.AddNotice("Image error: " + err.Error())
+		return core.ChatMessage{}, false
+	}
+	displayContent := content
+	content, inlineImages := m.userInput.ExtractInlineImages(content)
+	allImages := make([]core.Image, 0, len(inlineImages)+len(fileImages))
+	allImages = append(allImages, inlineImages...)
+	allImages = append(allImages, fileImages...)
+	return core.ChatMessage{
+		Role:           core.RoleUser,
+		Content:        content,
+		DisplayContent: displayContent,
+		Images:         allImages,
+	}, true
+}
+
+// drainInputQueueAfterCancel pops one queued item (if any) and runs it
+// through the normal submission pipeline. Called from handleStreamCancel
+// so a user who queued input while a turn was streaming sees the next one
+// run after Ctrl+C.
+func (m *model) drainInputQueueAfterCancel() tea.Cmd {
+	item, ok := m.userInput.Queue.Dequeue()
+	if !ok {
+		return nil
+	}
+	m.conv.Compact.ClearResult()
+	m.userInput.RestoreImages(item.Images)
+	return m.dispatchSubmission(item.Content)
+}
+
+// SubmitToAgent is the single exit point for "send this content to the
+// agent" — user Enter, slash command output, skill button, cron fire,
+// hook continuation, hub notification. Ensures the agent session is up,
+// pushes content+images onto its inbox, returns the outbox-poll cmd.
+// On no-provider or ensureAgentSession failure, posts a notice and
+// returns a commit cmd (the agent is not contacted).
+func (m *model) SubmitToAgent(content string, images []core.Image) tea.Cmd {
+	log.QueueLog("SubmitToAgent: %q", truncate(content, 60))
+	if m.env.LLMProvider == nil {
+		return m.notifyNoProvider()
 	}
 
 	startCmd, err := m.ensureAgentSession(content)
 	if err != nil {
-		m.conv.Append(core.ChatMessage{
-			Role:    core.RoleNotice,
-			Content: "Failed to start agent: " + err.Error(),
-		})
+		m.conv.AddNotice("Failed to start agent: " + err.Error())
 		return tea.Batch(m.CommitMessages()...)
 	}
 
 	m.env.DetectThinkingKeywords(content)
-
-	var images []core.Image
-	if len(m.conv.Messages) > 0 {
-		lastMsg := m.conv.Messages[len(m.conv.Messages)-1]
-		images = lastMsg.Images
-	}
 
 	sendCmd := m.sendToAgent(content, images)
 	if startCmd != nil {
@@ -66,25 +151,25 @@ func (m *model) StartProviderTurn(content string) tea.Cmd {
 	return sendCmd
 }
 
+// notifyNoProvider posts the standard "no provider connected" notice
+// and returns a commit cmd.
+func (m *model) notifyNoProvider() tea.Cmd {
+	m.conv.AddNotice(input.NoProviderMsg)
+	return tea.Batch(m.CommitMessages()...)
+}
+
+// HandleSkillInvocation runs the agent against the pending skill
+// invocation: consume → append to conv → SubmitToAgent. Plugin root
+// (if the skill came from a plugin) is set on the agent so hooks/tools
+// fired during the turn see PLUGIN_ROOT pointing at that plugin.
 func (m *model) HandleSkillInvocation() tea.Cmd {
+	displayMsg, fullMsg, pluginRoot := m.userInput.Skill.ConsumeInvocation()
 	if m.env.LLMProvider == nil {
-		m.conv.AddNotice("No provider connected. Use /model to connect.")
-		m.userInput.Skill.ClearPending()
-		return tea.Batch(m.CommitMessages()...)
+		return m.notifyNoProvider()
 	}
-
-	startCmd, err := m.ensureAgentSession("")
-	if err != nil {
-		m.conv.AddNotice("Failed to start agent: " + err.Error())
-		m.userInput.Skill.ClearPending()
-		return tea.Batch(m.CommitMessages()...)
-	}
-
-	displayMsg, fullMsg := m.userInput.Skill.ConsumeInvocation()
 	m.conv.Append(core.ChatMessage{Role: core.RoleUser, Content: fullMsg, DisplayContent: displayMsg})
-	sendCmd := m.sendToAgent(fullMsg, nil)
-	if startCmd != nil {
-		return tea.Batch(startCmd, sendCmd)
+	if pluginRoot != "" {
+		m.services.Agent.SetPluginRoot(pluginRoot)
 	}
-	return sendCmd
+	return m.SubmitToAgent(fullMsg, nil)
 }

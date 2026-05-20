@@ -6,6 +6,7 @@ package conv
 import (
 	"regexp"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/glamour"
@@ -17,8 +18,13 @@ import (
 	"github.com/genai-io/gen-code/internal/app/kit"
 )
 
-// MDRenderer renders markdown content to styled terminal output using glamour.
+// MDRenderer renders markdown content to styled terminal output using
+// glamour. Safe for use from a single goroutine only — the TUI's
+// rendering path is single-threaded (bubbletea Update/View). The mutex
+// only protects the dark/light rebuild path in case a future caller
+// reuses the renderer from a background goroutine.
 type MDRenderer struct {
+	mu       sync.Mutex
 	renderer *glamour.TermRenderer
 	width    int
 	darkBg   bool // tracks last known terminal background to detect theme changes
@@ -69,6 +75,8 @@ func (r *MDRenderer) rebuildIfNeeded() {
 // Tables are extracted and rendered with lipgloss/table for full border control,
 // everything else (including code blocks) goes through glamour natively.
 func (r *MDRenderer) Render(content string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.rebuildIfNeeded()
 	// Normalize paragraph line breaks: LLMs often hard-wrap at ~80 columns,
 	// producing softbreaks that glamour preserves as newlines. Joining them

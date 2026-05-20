@@ -41,7 +41,7 @@ func (m *model) setActiveIdentity(name string) error {
 // dispatchSlashCommand runs an arbitrary slash command as if the user had
 // typed it. Used by selector hotkeys (Shift+N / Shift+E in /identity).
 func (m *model) dispatchSlashCommand(cmd string) tea.Cmd {
-	ctrl := input.NewCommandController(m.commandDeps())
+	ctrl := input.NewSlashCommandController(m.slashCommandEnv())
 	teaCmd, _ := ctrl.HandleSubmit(cmd)
 	return teaCmd
 }

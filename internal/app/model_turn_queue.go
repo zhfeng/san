@@ -1,6 +1,6 @@
 // Turn-boundary inbox drain and prompt injection. After every agent turn
 // ends we drain (in priority order) queued user messages, cron-fired
-// prompts, async-hook continuations, and the main eventHub buffer. Each
+// prompts, async-hook continuations, and the main agentEventHub buffer. Each
 // drained item is converted to a notice + optional re-send to the agent.
 // Also handles the Stop hook result that gates session persistence.
 package app
@@ -82,20 +82,17 @@ func (m *model) drainTurnQueues() (tea.Cmd, bool) {
 	return nil, false
 }
 
+// injectNotification surfaces a background event (task completion, agent
+// message) into the live conversation. Notice + content come from hub.Merge
+// over a batch of hub.Events.
 func (m *model) injectNotification(msg hub.Message) tea.Cmd {
 	if msg.Notice != "" {
-		m.conv.Append(core.ChatMessage{Role: core.RoleNotice, Content: msg.Notice})
-	}
-	if m.env.LLMProvider == nil {
-		if msg.Notice == "" {
-			m.conv.Append(core.ChatMessage{Role: core.RoleNotice, Content: "A background task completed, but no provider is connected."})
-		}
-		return tea.Batch(m.CommitMessages()...)
+		m.conv.AddNotice(msg.Notice)
 	}
 	if msg.Content == "" {
 		return tea.Batch(m.CommitMessages()...)
 	}
-	return m.sendToAgent(msg.Content, nil)
+	return m.SubmitToAgent(msg.Content, nil)
 }
 
 func drainEvents(ch <-chan hub.Event, max int) []hub.Event {
@@ -119,29 +116,27 @@ func eventsToMessages(events []hub.Event) []hub.Message {
 	return msgs
 }
 
+// injectCronPrompt fires a scheduled cron prompt as if the user had just
+// typed it. The notice + user message show what triggered; SubmitToAgent
+// handles provider/agent state.
 func (m *model) injectCronPrompt(prompt string) tea.Cmd {
-	if m.env.LLMProvider == nil {
-		m.conv.Append(core.ChatMessage{Role: core.RoleNotice, Content: fmt.Sprintf("Cron fired but no provider connected: %s", prompt)})
-		return tea.Batch(m.CommitMessages()...)
-	}
-	m.conv.Append(core.ChatMessage{Role: core.RoleNotice, Content: "Scheduled task fired"})
+	m.conv.AddNotice("Scheduled task fired")
 	m.conv.Append(core.ChatMessage{Role: core.RoleUser, Content: prompt})
-	return m.sendToAgent(prompt, nil)
+	return m.SubmitToAgent(prompt, nil)
 }
 
+// injectAsyncHookContinuation surfaces an async hook's follow-up: the hook
+// pushed one or more context lines + a continuation prompt; we display the
+// context as user messages and submit the continuation to the agent.
 func (m *model) injectAsyncHookContinuation(item trigger.AsyncHookRewake) tea.Cmd {
 	if item.Notice != "" {
-		m.conv.Append(core.ChatMessage{Role: core.RoleNotice, Content: item.Notice})
+		m.conv.AddNotice(item.Notice)
 	}
 	if len(item.Context) == 0 {
-		return tea.Batch(m.CommitMessages()...)
-	}
-	if m.env.LLMProvider == nil {
-		m.conv.Append(core.ChatMessage{Role: core.RoleNotice, Content: "Async hook requested a follow-up, but no provider is connected."})
 		return tea.Batch(m.CommitMessages()...)
 	}
 	for _, ctx := range item.Context {
 		m.conv.Append(core.ChatMessage{Role: core.RoleUser, Content: ctx})
 	}
-	return m.sendToAgent(item.ContinuationPrompt, nil)
+	return m.SubmitToAgent(item.ContinuationPrompt, nil)
 }
