@@ -1,8 +1,9 @@
-// Deps builders: every sub-feature (input, conv, trigger) takes its
-// dependencies via a struct rather than reaching for package globals. These
-// methods assemble those structs from the model's services + env state.
-// Putting them in one place keeps the call sites in update.go / model.go
-// concise and makes the surface each sub-feature uses explicit.
+// Sub-feature wiring: every sub-feature (input overlay, prompt suggestion,
+// trigger) declares the surface it uses via a Deps struct rather than
+// reaching for package globals. The functions here translate the model's
+// services + env state into those structs. Keeping the wiring in one file
+// keeps update.go / model.go concise and makes each sub-feature's surface
+// explicit at the call site.
 package app
 
 import (
@@ -38,6 +39,7 @@ func (m *model) overlayDeps() input.OverlayDeps {
 		},
 		SetCurrentModel: func(info *llm.CurrentModelInfo) {
 			m.env.CurrentModel = info
+			m.env.LoadThinkingEffortFromStore()
 		},
 		ClearCachedInstructions: m.env.ClearCachedInstructions,
 		RefreshMemoryContext:    m.refreshMemoryContext,
