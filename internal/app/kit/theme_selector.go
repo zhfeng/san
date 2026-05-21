@@ -37,6 +37,7 @@ var themeChoices = []struct {
 }{
 	{"Light", "light", "Light background terminal"},
 	{"Dark", "dark", "Dark background terminal"},
+	{"Auto", "auto", "Match terminal appearance automatically"},
 }
 
 type themeSelectorModel struct{ cursor int }
@@ -105,7 +106,7 @@ func (c themeCapture) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (c themeCapture) View() string { return c.inner.View() }
 
-// RunThemeSelector opens the theme selector and returns the chosen theme ("light" or "dark").
+// RunThemeSelector opens the theme selector and returns the chosen theme ("light", "dark", or "auto").
 // Returns an empty string if the user quit without selecting.
 func RunThemeSelector() (string, error) {
 	p := tea.NewProgram(themeCapture{inner: newThemeSelector()})
