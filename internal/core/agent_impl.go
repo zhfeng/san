@@ -77,38 +77,74 @@ func (a *agent) Messages() []Message   { return a.snapshot() }
 
 func (a *agent) SetMessages(msgs []Message) {
 	a.mu.Lock()
-	known := make(map[string]struct{}, len(a.messages))
-	for _, m := range a.messages {
+	old := a.messages
+	known := make(map[string]struct{}, len(old))
+	for _, m := range old {
 		if m.ID != "" {
 			known[m.ID] = struct{}{}
 		}
 	}
-	a.messages = make([]Message, len(msgs))
-	copy(a.messages, msgs)
-	// Snapshot the just-introduced messages while still holding the
-	// write lock so the OnAppend emission below sees a stable set even
-	// if another SetMessages races. Emit OUTSIDE the lock — onEvent
-	// handlers may do I/O (recorder writes).
+
+	// Reconcile IDs: conv and agent each stamp IDs independently when a
+	// message first enters their slice, so naïvely copying msgs (which
+	// carries conv's IDs) would replace agent's prior IDs with brand-new
+	// ones — recorder already has a message.appended row for the agent
+	// ID, the new row duplicates it, and the integrity check flags
+	// orphans ("N expected vs N+dup replayed"). For each new message at
+	// a position where the old slice held an equivalent one (same role,
+	// content, tool linkage), reuse the old ID so the existing record
+	// stays authoritative. Only genuinely-new messages get fresh
+	// emitAppend events.
+	out := make([]Message, len(msgs))
 	var fresh []Message
-	for _, m := range msgs {
-		if m.ID == "" {
-			continue
+	for i, m := range msgs {
+		if i < len(old) && messagesEquivalent(old[i], m) {
+			m.ID = old[i].ID
+		} else if m.ID != "" {
+			if _, seen := known[m.ID]; !seen {
+				fresh = append(fresh, m)
+			}
 		}
-		if _, seen := known[m.ID]; seen {
-			continue
-		}
-		fresh = append(fresh, m)
+		out[i] = m
 	}
+	a.messages = out
 	a.mu.Unlock()
 
-	// Without these emits the session recorder (which hooks OnAppend)
-	// never persists the cancellation bookkeeping that handleStreamCancel
-	// pushes into the agent via ResyncMessages — the next
-	// inference.requested then references MessageIDs that have no
-	// matching message.appended row and replay integrity fails.
+	// Emit OUTSIDE the lock — onEvent handlers may do I/O (recorder
+	// writes). Without these emits the session recorder never persists
+	// the cancellation bookkeeping that handleStreamCancel pushes into
+	// the agent via ResyncMessages — the next inference.requested then
+	// references MessageIDs that have no matching message.appended row
+	// and replay integrity fails.
 	for _, m := range fresh {
 		a.emitAppend(m)
 	}
+}
+
+// messagesEquivalent reports whether two messages represent the same
+// logical entry, modulo ID. Used by SetMessages to detect when a
+// position-aligned new message is just a re-stamped copy of the old
+// one (conv-side ID vs agent-side ID for the same content) so the old
+// ID can be preserved across a ResyncMessages.
+func messagesEquivalent(a, b Message) bool {
+	if a.Role != b.Role || a.Content != b.Content {
+		return false
+	}
+	if (a.ToolResult == nil) != (b.ToolResult == nil) {
+		return false
+	}
+	if a.ToolResult != nil && a.ToolResult.ToolCallID != b.ToolResult.ToolCallID {
+		return false
+	}
+	if len(a.ToolCalls) != len(b.ToolCalls) {
+		return false
+	}
+	for i := range a.ToolCalls {
+		if a.ToolCalls[i].ID != b.ToolCalls[i].ID {
+			return false
+		}
+	}
+	return true
 }
 
 // Append adds a message to the conversation and fires the OnMessage hook.
