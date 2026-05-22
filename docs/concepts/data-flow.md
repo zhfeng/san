@@ -544,6 +544,82 @@ the repaint zone no longer redraws it.
 Tool-call spinners live in the repaint zone the same way: they appear
 while a tool is running and disappear once the result lands.
 
+## Path E — Cancel mid-stream and resume
+
+User hits **Esc** or **Ctrl+C** while the agent is streaming. The agent
+goroutine stays alive — only the in-flight turn is cancelled — and a
+follow-up user message resumes the same session via the inbox channel.
+
+```
+   UI / tea.Update           Agent goroutine             Provider stream goroutine
+   ───────────────           ───────────────             ─────────────────────────
+
+   Esc key                   in ThinkAct/streamInfer     mid HTTP stream,
+   ──▶ handleStreamCancel    turn = &turnHandle{c,d}     EmitText(ctx, ch, …)
+       │
+       │ 1. Agent.InterruptTurn()
+       │      ├─ interruptPending.Store(true)
+       │      ├─ h := turn.Swap(nil)
+       │      ├─ h.cancel()  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─▶  turnCtx.Done() fires
+       │      │                                       streamInfer returns
+       │      │                                       execTools Phase 3 breaks
+       │      │                                       EmitText select picks
+       │      │                                       ctx.Done → no leak
+       │      │                                       ThinkAct returns
+       │      │                                       close(h.done) ──┐
+       │      └─ <-h.done   (≤ 250 ms)  ◀ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
+       │         agent is now quiescent — safe to mutate shared state
+       │
+       │ 2. conv-side cancellation bookkeeping
+       │      ├─ Stream.Stop / hide modals / drain pending questions
+       │      ├─ cancelPendingToolCalls  → appends cancelled tool_result
+       │      ├─ MarkLastInterrupted     → asst.Content += " [Interrupted]"
+       │      └─ AppendInterruptedByUserMarker
+       │                  → appends user "[Request interrupted by user]"
+       │
+       │ 3. Agent.ResyncMessages(conv.ConvertToProvider())
+       │      └─ agent.SetMessages overwrites a.messages and
+       │         emits OnAppend for IDs not in the prior snapshot
+       │         (session recorder catches up; no integrity gap)
+       │
+       │ 4. CommitMessages + drainInputQueueAfterCancel
+       │
+       │                          inner break (turn cancel detected),
+       │                          interruptPending.Store(false),
+       │                          TurnEvent(StopCancelled) emitted
+       │
+       │   ◀── TurnEvent ─────────┤
+       │   OnTurnEnd: StopReason==Cancelled
+       │              → skip idle hooks, no Stop/Notification hook fires
+       │
+       │                          outer loop: waitForInput (idle)
+
+   user types "do B instead"
+   ──▶ SubmitToAgent
+       └─ ensureAgentSession sees Active=true — NO rebuild
+       └─ Agent.Send ──────────▶  inbox
+                                  waitForInput unblocks
+                                  loop top: interruptPending=false → proceed
+                                  new turnHandle, fresh ThinkAct
+                                                                ─▶ new stream
+```
+
+Three pieces carry the cancel safely:
+
+| Mechanism | What it protects |
+|---|---|
+| `turn atomic.Pointer[turnHandle]` | The "live turn handle" — `Swap(nil)` makes the cancel atomic so two interrupts can't double-cancel the next turn. |
+| `interruptPending atomic.Bool` | Latches an interrupt that lands between turns (when `turn` is momentarily nil), so the next iteration of Run's inner loop bails to `waitForInput` instead of running an unwanted ThinkAct. |
+| `turnHandle.done` chan + 250 ms timeout | The handshake: `Task.InterruptTurn` waits for ThinkAct to actually unwind before `ResyncMessages` mutates `a.messages`, eliminating the race against the agent goroutine's own `a.append`. The timeout is a backstop for a tool that ignores ctx; in practice the wait is sub-millisecond. |
+
+Why this matters versus the pre-rewrite path: the old cancel called
+`Agent.Stop`, killed the goroutine, and rebuilt the entire agent on the
+next message — full `buildAgent`, fresh `llm.Client`, plus a spurious
+Stop/Start event pair in the session record. The new path keeps the
+agent alive, so the next `Agent.Send` is just an inbox push and the
+LLM provider sees the same conversation prefix (better server-side
+prompt cache behaviour).
+
 ## File pointers
 
 | Path step | File |
@@ -558,4 +634,7 @@ while a tool is running and disappear once the result lands.
 | Scrollback commit | [`internal/app/model_scrollback.go`](../../internal/app/model_scrollback.go) |
 | Conv event router | [`internal/app/conv/update.go`](../../internal/app/conv/update.go) |
 | `agent.Send` / outbox poll | [`internal/app/agent.go`](../../internal/app/agent.go) |
+| Cancel mid-stream | [`internal/app/update_input_effects.go`](../../internal/app/update_input_effects.go) |
+| `InterruptTurn` / `ResyncMessages` | [`internal/agent/session.go`](../../internal/agent/session.go) |
+| `turn` / `InterruptCurrentTurn` / Run loop | [`internal/core/agent_impl.go`](../../internal/core/agent_impl.go) |
 | Bottom UI compose | [`internal/app/view.go`](../../internal/app/view.go) |
