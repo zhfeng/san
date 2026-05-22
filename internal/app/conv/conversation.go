@@ -137,11 +137,9 @@ func (m *ConversationModel) MarkLastInterrupted() {
 	}
 }
 
-// InterruptedByUserMarker is the user-role marker appended after a
-// cancelled stream. It gives the next turn an explicit, parseable
-// signal that the prior assistant response did not complete because
-// the user interrupted it.
-const InterruptedByUserMarker = "[Request interrupted by user]"
+// InterruptedByUserMarker re-exports the marker from core so callers in
+// this package can keep the existing local identifier.
+const InterruptedByUserMarker = core.InterruptedByUserMarker
 
 // AppendInterruptedByUserMarker appends [[InterruptedByUserMarker]] as a
 // user-role message so subsequent inference sees a clean turn boundary
