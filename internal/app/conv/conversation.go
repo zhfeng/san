@@ -115,9 +115,9 @@ func (m *ConversationModel) MarkLastInterrupted() {
 		}
 		if len(msg.ToolCalls) == 0 {
 			if msg.Content == "" {
-				msg.Content = "[Interrupted]"
+				msg.Content = InterruptedMarker
 			} else {
-				msg.Content += " [Interrupted]"
+				msg.Content += " " + InterruptedMarker
 			}
 		}
 		return
