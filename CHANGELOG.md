@@ -3,6 +3,11 @@
 All notable changes to Gen Code are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v1.19.1] - 2026-05-23
+
+### Fixed
+- Broaden @-file recall, cache scans, and smooth viewport in suggest
+
 ## [v1.19.0] - 2026-05-23
 
 ### Added
