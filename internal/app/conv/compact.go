@@ -91,7 +91,11 @@ func CompactConversation(ctx context.Context, c *llm.Client, msgs []core.Message
 }
 
 func RenderCompactStatus(width int, spinnerView string, state CompactState) string {
-	if !state.Active && state.LastResult == "" {
+	// Render only the in-progress spinner and error states. A successful
+	// compaction is communicated by the boundary line + the collapsed summary
+	// message, so the completed result box is suppressed (no redundant panel).
+	showError := state.LastResult != "" && state.LastError
+	if !state.Active && !showError {
 		return ""
 	}
 
