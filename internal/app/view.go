@@ -45,39 +45,76 @@ func (m *model) View() string {
 // renderNormalView composes the standard layout: chat scrollback area,
 // turn-usage summary, queue preview, textarea + suggestions, and the
 // bottom status line.
+//
+// Only the active (uncommitted) tail is rendered here; finished messages are
+// already in the terminal's native scrollback (committed via tea.Println, see
+// model_scrollback.go). The chat section is height-limited so the View()
+// output never exceeds the terminal height: when the live tail is taller than
+// the space above the input area, its last lines (the latest content) are
+// shown and earlier lines scroll off — the full message lands in native
+// scrollback at turn end, which the terminal scrolls back through natively.
 func (m *model) renderNormalView(separator, trackerView string) string {
+	// Render the footer first so we can measure how many lines it consumes
+	// and cap the chat section to the remaining terminal height.
+	footer := m.renderFooter(separator)
+	bottomLines := strings.Count(footer, "\n")
+
+	maxContentHeight := 0
+	// Only truncate when there's room for at least one line of content.
+	if m.env.Height > bottomLines {
+		maxContentHeight = m.env.Height - bottomLines
+	}
+
 	activeContent := conv.RenderActiveContent(m.messageRenderParams())
 	chatSection := m.renderChatSection(activeContent, trackerView)
 
-	var view strings.Builder
-	if chatSection != "" {
-		view.WriteString(chatSection)
+	return tailLines(chatSection, maxContentHeight) + footer
+}
+
+// tailLines returns the last maxLines newline-delimited lines of s, keeping the
+// latest content visible when the live tail is taller than the available
+// height. s is returned unchanged when maxLines <= 0 or it already fits.
+func tailLines(s string, maxLines int) string {
+	if maxLines <= 0 {
+		return s
 	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= maxLines {
+		return s
+	}
+	return strings.Join(lines[len(lines)-maxLines:], "\n")
+}
+
+// renderFooter renders everything below the chat section (turn usage,
+// separators, queue preview, input area, suggestions, status line) into a
+// single string so its line count can be measured.
+func (m *model) renderFooter(separator string) string {
+	var b strings.Builder
 	if turnUsage := conv.RenderTurnUsageSummary(m.env.TurnInputTokens, m.env.TurnOutputTokens, m.env.Width); turnUsage != "" {
-		view.WriteString("\n")
-		view.WriteString(turnUsage)
+		b.WriteString("\n")
+		b.WriteString(turnUsage)
 	}
-	view.WriteString("\n")
-	view.WriteString(separator)
+	b.WriteString("\n")
+	b.WriteString(separator)
 	if queuePreview := m.renderQueuePreview(); queuePreview != "" {
-		view.WriteString("\n")
-		view.WriteString(queuePreview)
+		b.WriteString("\n")
+		b.WriteString(queuePreview)
 	}
-	view.WriteString("\n")
-	view.WriteString(m.renderInputView())
+	b.WriteString("\n")
+	b.WriteString(m.renderInputView())
 	if suggestions := m.userInput.Suggestions.Render(m.env.Width); suggestions != "" {
-		view.WriteString("\n")
-		view.WriteString(suggestions)
+		b.WriteString("\n")
+		b.WriteString(suggestions)
 	}
-	view.WriteString("\n")
-	view.WriteString(separator)
-	view.WriteString("\n")
+	b.WriteString("\n")
+	b.WriteString(separator)
+	b.WriteString("\n")
 	if statusLine := m.renderModeStatus(); statusLine != "" {
-		view.WriteString(statusLine)
+		b.WriteString(statusLine)
 	} else {
-		view.WriteString(" ")
+		b.WriteString(" ")
 	}
-	return view.String()
+	return b.String()
 }
 
 func (m *model) renderActivePopup() string {
@@ -113,6 +150,9 @@ func (m model) renderInputView() string {
 	return prompt + m.userInput.RenderTextarea()
 }
 
+// renderChatSection assembles the active chat content (uncommitted messages,
+// tracker, transient spinners) into a single string. Height-limiting is
+// applied by the caller (tailLines).
 func (m model) renderChatSection(activeContent, trackerView string) string {
 	var parts []string
 

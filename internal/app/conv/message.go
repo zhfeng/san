@@ -206,8 +206,7 @@ func RenderTokenWarning(inputTokens, inputLimit int, compactSuppressed bool) str
 }
 
 var (
-	userMsgStyle      = lipgloss.NewStyle()
-	assistantMsgStyle = lipgloss.NewStyle()
+	userMsgStyle = lipgloss.NewStyle()
 
 	InputPromptStyle = lipgloss.NewStyle().
 				Foreground(kit.CurrentTheme.Primary).
@@ -378,7 +377,12 @@ func formatAssistantContent(params AssistantParams) string {
 	}
 
 	if params.StreamActive && params.IsLast && len(params.ToolCalls) == 0 {
-		return assistantMsgStyle.Render(params.Content + "▌")
+		// Wrap at terminal width so long lines don't overflow and the
+		// height calculation (which counts \n-delimited lines) matches
+		// the actual visual line count. Mirrors the thinking branch above:
+		// reserve 2 cols for the "● " prefix, floored at minWrapWidth.
+		wrapWidth := max(params.Width-2, minWrapWidth)
+		return lipgloss.NewStyle().Width(wrapWidth).Render(params.Content + "▌")
 	}
 
 	if params.Content == "" {

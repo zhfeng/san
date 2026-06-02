@@ -154,9 +154,6 @@ func applyPreInfer(rt Runtime, m *Model) tea.Cmd {
 	commitCmds := rt.CommitMessages()
 	m.Append(core.ChatMessage{Role: core.RoleAssistant, Content: ""})
 	cmds := append(commitCmds, m.Spinner.Tick)
-	if len(cmds) == 1 {
-		return cmds[0]
-	}
 	return tea.Batch(cmds...)
 }
 
