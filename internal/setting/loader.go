@@ -282,6 +282,47 @@ func UpdateDisabledToolsAt(disabledTools map[string]bool, userLevel bool) error 
 	return nil
 }
 
+// UpdateSelfLearnAt persists the L1 self-learning config at the requested
+// settings level (true = user-wide, false = project-local). The new value
+// is merged with whatever else lives in that settings file — only the
+// selfLearn block is rewritten. Returns Validate's error verbatim if the
+// new config is illegal (§3.1) so the caller can surface it inline before
+// touching disk.
+func UpdateSelfLearnAt(cfg SelfLearnSettings, userLevel bool) error {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	loader := NewLoader()
+	path := filepath.Join(loader.projectDir, "settings.json")
+	if userLevel {
+		path = filepath.Join(loader.userDir, "settings.json")
+	}
+
+	// Read the existing settings for THIS file and replace only the
+	// selfLearn block. We deliberately do NOT route through
+	// SaveToUser/SaveToProject (which merge via mergeSelfLearn): that merge
+	// ORs the boolean fields, so reusing it here would OR the new config
+	// with the file's own previous value and a true→false toggle (e.g.
+	// disabling an arm from /config) could never be persisted. Replacing
+	// the block lets the off-toggle actually stick while leaving every
+	// other setting in the file untouched. (Cross-level layering still ORs
+	// on Load by design — disabling at a lower-priority level cannot
+	// override an enable at a higher-priority one.)
+	existing := NewData()
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, existing)
+	}
+	existing.SelfLearn = cfg
+	if err := writeJSONAtomic(path, existing); err != nil {
+		return err
+	}
+
+	loadedSettingsMu.Lock()
+	loadedSettings = nil
+	loadedSettingsMu.Unlock()
+	return nil
+}
+
 // GetDisabledTools returns the merged disabled tools map from loaded settings.
 // Returns a copy so callers cannot mutate the cached settings.
 func GetDisabledTools() map[string]bool {

@@ -86,6 +86,10 @@ type Skill struct {
 	Description  string   `yaml:"description"`
 	AllowedTools []string `yaml:"allowed-tools"`
 	ArgumentHint string   `yaml:"argument-hint"`
+	// Origin marks provenance. Absent/empty means "user-created" (the
+	// default); other producers may set a non-empty value to mark the
+	// source so downstream consumers can scope writes by provenance.
+	Origin string `yaml:"origin,omitempty"`
 
 	// Runtime fields
 	FilePath string     // Full path to the skill file

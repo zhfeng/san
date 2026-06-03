@@ -14,6 +14,7 @@ import (
 	"github.com/genai-io/gen-code/internal/app/input"
 	"github.com/genai-io/gen-code/internal/app/kit"
 	"github.com/genai-io/gen-code/internal/core"
+	"github.com/genai-io/gen-code/internal/core/system"
 	"github.com/genai-io/gen-code/internal/hook"
 	"github.com/genai-io/gen-code/internal/identity"
 	"github.com/genai-io/gen-code/internal/llm"
@@ -197,6 +198,12 @@ func (m *model) ensureAgentSession(pendingSend string) (tea.Cmd, error) {
 		return nil, err
 	}
 
+	// Wire L1 self-learning *after* Agent.Start so the ReviewFunc can capture
+	// the live Agent + System for its fork. Builds nothing if both arms are
+	// off (§3.1 zero-overhead guarantee). pendingSend is forwarded so the
+	// reviewer's cadence seed skips the in-flight user turn.
+	m.wireSelfLearn(params, pendingSend)
+
 	cmds := []tea.Cmd{
 		conv.DrainAgentOutbox(m.services.Agent.Outbox()),
 		conv.PollPermBridge(m.services.Agent.PermissionBridge()),
@@ -259,10 +266,26 @@ func (m *model) wireReminderProviders() {
 	m.services.Reminder.Register(reminder.NewProvider(reminder.ProviderMemoryProject, func() string {
 		return reminder.WrapMemory("project", m.env.CachedProjectInstructions)
 	}))
+	// Agent-written auto-memory (L1 reviewer's store). Read at Render() time so
+	// PostCompact / cwd change picks up the latest written entries without a
+	// separate refresh hook (see notes/active/l1-background-review.md §4.5).
+	// Kept as its own scope so agent-written entries never mix with the
+	// user-authored memory above.
+	m.services.Reminder.Register(reminder.NewProvider(reminder.ProviderMemoryAuto, func() string {
+		body, ok := system.LoadAutoMemory(m.env.CWD)
+		if !ok {
+			return ""
+		}
+		return reminder.WrapMemory("auto", body)
+	}))
 }
 
 func (m *model) StopAgentSession() {
 	m.services.Agent.Stop()
+	// Stop feeding the L1 reviewer AND cancel the session-scoped context
+	// so an in-flight fork unblocks immediately instead of holding tokens /
+	// HTTP for up to forkDeadline.
+	m.teardownSelfLearn()
 }
 
 // ============================================================

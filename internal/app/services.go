@@ -1,6 +1,9 @@
 package app
 
 import (
+	"context"
+	"sync/atomic"
+
 	"github.com/genai-io/gen-code/internal/agent"
 	"github.com/genai-io/gen-code/internal/command"
 	"github.com/genai-io/gen-code/internal/cron"
@@ -10,6 +13,7 @@ import (
 	"github.com/genai-io/gen-code/internal/mcp"
 	"github.com/genai-io/gen-code/internal/plugin"
 	"github.com/genai-io/gen-code/internal/reminder"
+	"github.com/genai-io/gen-code/internal/selflearn"
 	"github.com/genai-io/gen-code/internal/session"
 	"github.com/genai-io/gen-code/internal/setting"
 	"github.com/genai-io/gen-code/internal/skill"
@@ -39,26 +43,59 @@ type services struct {
 	Agent    *agent.Task
 	Identity *identity.Registry
 	Reminder *reminder.Service
+
+	// SelfLearn groups the L1 self-learning state. Reviewer / Cancel / Live
+	// are populated per wiring (zero when no arm is enabled — §3.1 zero-
+	// overhead guarantee). Indicator is allocated once at services
+	// construction and outlives wiring/teardown so the render path can
+	// always Snapshot() without a nil check.
+	SelfLearn SelfLearnServices
+}
+
+// SelfLearnServices bundles the L1 fields that move together. See
+// notes/active/l1-background-review.md §9 step 4.
+type SelfLearnServices struct {
+	// Reviewer is the background L1 trigger. Non-nil only when an arm is
+	// enabled at session start; nil ⇒ zero overhead (no goroutine, no
+	// counters, no extra model calls).
+	Reviewer *selflearn.Reviewer
+
+	// Cancel cancels the session-scoped context every in-flight fork
+	// inherits. Called from StopAgentSession so a /clear or quit unblocks
+	// the fork immediately instead of waiting for the forkDeadline; never
+	// nil while Reviewer is non-nil.
+	Cancel context.CancelFunc
+
+	// Live is flipped to false when the current wiring is torn down so a
+	// late write observer drops silently instead of racing on the Reviewer
+	// pointer. Allocated per wiring; nil before the first wiring.
+	Live *atomic.Bool
+
+	// Indicator drives the four-phase status-bar surface (§"User-visible
+	// surface"). Always non-nil; the snapshot reports an idle phase when
+	// L1 is off or no review has run yet.
+	Indicator *SelfLearnIndicator
 }
 
 func newServices() services {
 	return services{
-		Setting:  setting.Default(),
-		LLM:      llm.Default(),
-		Tool:     tool.Default(),
-		Hook:     hook.DefaultEngine(),
-		Session:  session.Default(),
-		Skill:    skill.Default(),
-		Subagent: subagent.Default(),
-		Command:  command.Default(),
-		Task:     task.Default(),
-		Tracker:  tracker.Default(),
-		Cron:     cron.Default(),
-		MCP:      mcp.DefaultRegistry(),
-		Plugin:   plugin.Default(),
-		Agent:    agent.Default(),
-		Identity: identity.Default(),
-		Reminder: reminder.NewService(),
+		Setting:   setting.Default(),
+		LLM:       llm.Default(),
+		Tool:      tool.Default(),
+		Hook:      hook.DefaultEngine(),
+		Session:   session.Default(),
+		Skill:     skill.Default(),
+		Subagent:  subagent.Default(),
+		Command:   command.Default(),
+		Task:      task.Default(),
+		Tracker:   tracker.Default(),
+		Cron:      cron.Default(),
+		MCP:       mcp.DefaultRegistry(),
+		Plugin:    plugin.Default(),
+		Agent:     agent.Default(),
+		Identity:  identity.Default(),
+		Reminder:  reminder.NewService(),
+		SelfLearn: SelfLearnServices{Indicator: NewSelfLearnIndicator()},
 	}
 }
 

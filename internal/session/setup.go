@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // defaultSetup is the package-level session setup, initialized by Initialize().
@@ -185,6 +186,50 @@ func loadLeafIfExists(st *Store, sessionID string) string {
 	}
 	leaf, _ := st.transcriptStore.LastMessageID(context.Background(), sessionID)
 	return leaf
+}
+
+// NewSidechainRecorder returns a fresh Recorder bound to a NEW session
+// that is its own resumable transcript ("gen --resume <id>" replays
+// the fork in isolation), parented under the live main session via
+// agentID so the inspector can still associate them. Each fork should
+// call this once and pass the result as the fork agent's
+// core.Config.OnEvent. The recorder is not cached because there can be
+// many concurrent forks of different kinds.
+//
+// The fork session ID has the form
+//
+//	<main-session>.<agentID>.<unix-seconds>
+//
+// which keeps the parent-child relationship readable, lets multiple
+// forks of the same kind coexist (different timestamps), and stays a
+// valid SessionID for the resume path.
+//
+// Returns nil when the session store isn't ready — the L1 fork is
+// best-effort so a missing recorder is fine.
+func (s *Setup) NewSidechainRecorder(agentID, provider, model string, maxTokens int) *Recorder {
+	s.mu.RLock()
+	st := s.Store
+	parentSessionID := s.SessionID
+	s.mu.RUnlock()
+
+	if st == nil || st.transcriptStore == nil || parentSessionID == "" {
+		return nil
+	}
+	forkSessionID := fmt.Sprintf("%s.%s.%d", parentSessionID, agentID, time.Now().Unix())
+	return NewRecorder(RecorderOptions{
+		FileStore: st.transcriptStore,
+		SessionID: forkSessionID,
+		AgentID:   agentID,
+		Provider:  provider,
+		Model:     model,
+		MaxTokens: maxTokens,
+		Cwd:       st.cwd,
+		ProjectID: st.projectID,
+		// Sidechain flag is what the inspector reads to keep fork messages
+		// out of the main thread; without it the L1 review would pollute
+		// the main chain.
+		Sidechain: true,
+	})
 }
 
 // Recorder returns the cached main-session Recorder, or nil if NewRecorder

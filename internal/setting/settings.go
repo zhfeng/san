@@ -12,6 +12,7 @@ package setting
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -32,6 +33,130 @@ type Data struct {
 	// Identity selects an active persona under ~/.gen/identities/<name>.md or
 	// .gen/identities/<name>.md. Empty = use built-in default identity.
 	Identity string `json:"identity,omitempty"`
+	// SelfLearn toggles + tunes the self-learning loop (per-turn background
+	// review of memory and skills). Both arms are off by default (opt-in).
+	SelfLearn SelfLearnSettings `json:"selfLearn,omitempty"`
+}
+
+// SelfLearnSettings configures the two independent self-learning arms.
+// See notes/active/l1-background-review.md §3.1.
+type SelfLearnSettings struct {
+	Memory SelfLearnMemory `json:"memory,omitempty"`
+	Skills SelfLearnSkills `json:"skills,omitempty"`
+}
+
+// SelfLearnMaxMemoryKB is the upper bound on memory.maxKB and the default
+// when the config field is zero. It matches the injection cap
+// (autoMemoryByteCap = 25 KB) so the on-disk per-file cap can never exceed
+// what the loader would have to truncate — see §4.2 invariant.
+const SelfLearnMaxMemoryKB = 25
+
+// SelfLearnDefaultEveryTurns and SelfLearnDefaultEveryToolIters are the
+// review-cadence defaults applied when the corresponding config field is
+// zero — the single source of truth shared by the runtime reviewer
+// (ResolveSettings) and the /config panel's default display.
+const (
+	SelfLearnDefaultEveryTurns     = 10
+	SelfLearnDefaultEveryToolIters = 10
+)
+
+// SelfLearnMemory controls memory-evolving: review every N user turns. MaxKB
+// is the on-disk cap per memory file; lower values force more aggressive
+// pruning. May not exceed SelfLearnMaxMemoryKB.
+type SelfLearnMemory struct {
+	Enabled    bool `json:"enabled,omitempty"`
+	EveryTurns int  `json:"everyTurns,omitempty"` // 0 = SelfLearnDefaultEveryTurns
+	MaxKB      int  `json:"maxKB,omitempty"`      // 0 = SelfLearnMaxMemoryKB
+}
+
+// SelfLearnSkills controls skill-evolving: review when accumulated tool
+// iterations since the last review reach EveryToolIters, plus the action
+// permissions of §5.5.
+//
+// Permission fields are encoded as Deny* booleans so the zero value is
+// "allow" — the Go idiom of "zero value should be sensible default" — and
+// every settings.json that omits the field gets the conservative
+// permissive default without any pointer-vs-nil ceremony.
+type SelfLearnSkills struct {
+	Enabled        bool `json:"enabled,omitempty"`
+	EveryToolIters int  `json:"everyToolIters,omitempty"` // 0 = SelfLearnDefaultEveryToolIters
+
+	// DenyCreate / DenyUpdate / DenyDelete gate the corresponding action on
+	// agent-created skills. Zero ⇒ allowed; set to true to disable that
+	// action. See §5.5.
+	DenyCreate bool `json:"denyCreate,omitempty"`
+	DenyUpdate bool `json:"denyUpdate,omitempty"`
+	DenyDelete bool `json:"denyDelete,omitempty"`
+
+	// AllowUpdateUserCreated is the advanced opt-in that extends update to
+	// also patch user-created skills (Hermes-style). Default false. Even
+	// when true, create and delete on user-created remain impossible at
+	// any config setting.
+	AllowUpdateUserCreated bool `json:"allowUpdateUserCreated,omitempty"`
+}
+
+// AllowCreate / AllowUpdate / AllowDelete report whether the named action
+// is permitted under the current configuration. These are the read paths
+// the runtime takes — settings.json stores Deny*.
+func (s SelfLearnSkills) AllowCreate() bool { return !s.DenyCreate }
+func (s SelfLearnSkills) AllowUpdate() bool { return !s.DenyUpdate }
+func (s SelfLearnSkills) AllowDelete() bool { return !s.DenyDelete }
+
+// ResolvedMaxKB returns the resolved MaxKB (default SelfLearnMaxMemoryKB if zero).
+func (m SelfLearnMemory) ResolvedMaxKB() int {
+	if m.MaxKB <= 0 {
+		return SelfLearnMaxMemoryKB
+	}
+	return m.MaxKB
+}
+
+// ResolvedEveryTurns returns the resolved memory review cadence in user turns
+// (default SelfLearnDefaultEveryTurns when the field is zero).
+func (m SelfLearnMemory) ResolvedEveryTurns() int {
+	if m.EveryTurns <= 0 {
+		return SelfLearnDefaultEveryTurns
+	}
+	return m.EveryTurns
+}
+
+// ResolvedEveryToolIters returns the resolved skill review cadence in tool
+// iterations (default SelfLearnDefaultEveryToolIters when the field is zero).
+func (s SelfLearnSkills) ResolvedEveryToolIters() int {
+	if s.EveryToolIters <= 0 {
+		return SelfLearnDefaultEveryToolIters
+	}
+	return s.EveryToolIters
+}
+
+// Validate enforces the cross-field invariants of §3.1: two illegal skill
+// boolean combinations are rejected, and memory.maxKB must lie in [0, 25].
+// Returns nil when the configuration is acceptable (including the all-zero
+// "feature off" case).
+//
+// denyDelete is intentionally NOT constrained: "let the reviewer create and
+// refine its own skills but never auto-delete them" is a legitimate
+// conservative config. Delete is already restricted to agent-created skills,
+// so opting out of it removes no safety.
+func (s SelfLearnSettings) Validate() error {
+	if s.Memory.MaxKB < 0 || s.Memory.MaxKB > SelfLearnMaxMemoryKB {
+		return fmt.Errorf(
+			"memory size must be between 1 and %d KB (got %d)",
+			SelfLearnMaxMemoryKB, s.Memory.MaxKB,
+		)
+	}
+	create := s.Skills.AllowCreate()
+	update := s.Skills.AllowUpdate()
+	if create && !update {
+		return fmt.Errorf(
+			"\"Create new skills\" needs \"Update existing skills\" — otherwise created skills could never be refined",
+		)
+	}
+	if s.Skills.AllowUpdateUserCreated && !update {
+		return fmt.Errorf(
+			"\"Update user-authored skills\" needs \"Update existing skills\" — the base update permission",
+		)
+	}
+	return nil
 }
 
 // PermissionSettings defines permission rules for tool execution.
@@ -279,6 +404,7 @@ func (s *Data) Clone() *Data {
 	dst.Theme = s.Theme
 	dst.SearchProvider = s.SearchProvider
 	dst.Identity = s.Identity
+	dst.SelfLearn = s.SelfLearn // value-typed; shallow copy is correct
 	if s.AllowBypass != nil {
 		v := *s.AllowBypass
 		dst.AllowBypass = &v

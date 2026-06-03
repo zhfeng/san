@@ -132,6 +132,15 @@ func awaitMainEvent(ch <-chan hub.Event) tea.Cmd {
 // is empty, so the next firing waits for the next publish.
 func (m *model) onMainEvent(ev hub.Event) tea.Cmd {
 	next := awaitMainEvent(m.mainEvents)
+	// Selflearn tick-start events are internal spinner wake-ups, not
+	// user-visible notices. TryStartTicker keeps back-to-back reviews
+	// from stacking parallel tick chains.
+	if ev.Type == eventSelfLearnReviewStarted {
+		if m.services.SelfLearn.Indicator != nil && m.services.SelfLearn.Indicator.TryStartTicker() {
+			return tea.Batch(scheduleSelflearnTick(), next)
+		}
+		return next
+	}
 	if m.conv.Stream.Active {
 		m.pendingMainEvents = append(m.pendingMainEvents, ev)
 		return next

@@ -51,6 +51,7 @@ func (m *model) popups() []popup {
 		&m.userInput.Memory.Selector,
 		&m.userInput.Search,
 		&m.userInput.Identity,
+		&m.userInput.Config,
 	}
 }
 
@@ -82,6 +83,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case kit.DismissedMsg, input.ToolToggleMsg:
 		return m, nil
+	case input.ConfigSavedMsg:
+		// Refresh the in-memory settings handle so re-opening /config (and any
+		// in-session reader) sees the just-saved values rather than the stale
+		// pre-save snapshot. The panel already persisted to disk.
+		if m.services.Setting != nil {
+			if err := m.services.Setting.Reload(m.env.CWD); err != nil {
+				log.Logger().Warn("reload settings after config save failed", zap.Error(err))
+			}
+		}
+		m.conv.AddNotice("Self-learning config saved (" + msg.Scope + ")")
+		m.notifySelfLearnOverride(msg)
+		// Re-wire the L1 reviewer so the just-saved arms / cadences take
+		// effect on the running session instead of silently waiting for
+		// the next agent restart. Wire only when the agent is already
+		// active; an inactive session will wire on the first user turn.
+		if m.services.Agent != nil && m.services.Agent.Active() {
+			m.wireSelfLearn(m.buildAgentParams(), "")
+		}
+		return m, nil
 	case input.SkillCycleMsg:
 		// Why re-emit on toggle: the skills directory rides in
 		// <system-reminder>, which is only refreshed at SessionStart and
@@ -112,6 +132,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleStopHookResult(msg)
 	case mainEventMsg:
 		return m, m.onMainEvent(msg.event)
+	case selflearnTickMsg:
+		return m, m.handleSelflearnTick()
 	}
 
 	if cmd, handled := m.routeToSubModel(msg); handled {

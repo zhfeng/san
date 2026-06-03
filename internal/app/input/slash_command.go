@@ -81,6 +81,7 @@ type SlashCommandEnv struct {
 	SpinnerTickCmd          func() tea.Cmd
 	ResetCronQueue          func()
 	ForkSession             func() (originalSessionID string, err error)
+	RunSelfLearnDemo        func()
 }
 
 type SlashCommandController struct {
@@ -113,6 +114,8 @@ func builtinCommandHandlers() map[string]slashCommandHandler {
 		"loop":           (*SlashCommandController).handleLoopCommand,
 		"search":         (*SlashCommandController).handleSearchCommand,
 		"identity":       (*SlashCommandController).handleIdentityCommand,
+		"config":         (*SlashCommandController).handleConfigCommand,
+		"selflearn-demo": (*SlashCommandController).handleSelflearnDemoCommand,
 	}
 }
 
@@ -298,6 +301,29 @@ func (c *SlashCommandController) handleResumeCommand(_ context.Context, _ string
 	if err := c.env.Input.Session.Selector.EnterSelect(c.env.Width, c.env.Height, c.env.Session.GetStore(), c.env.Cwd); err != nil {
 		return "", nil, fmt.Errorf("failed to open session selector: %w", err)
 	}
+	return "", nil, nil
+}
+
+// handleConfigCommand opens the /config Self-Learning panel. Currently the
+// panel only hosts the L1 config; a multi-panel sidebar (Provider /
+// Permissions / Appearance / …) is planned and will be added by extending
+// ConfigSelector with sibling panels — the slash command stays /config
+// either way.
+func (c *SlashCommandController) handleConfigCommand(_ context.Context, _ string) (string, tea.Cmd, error) {
+	c.env.Input.Config.Enter(c.env.Width, c.env.Height)
+	return "", nil, nil
+}
+
+// handleSelflearnDemoCommand drives the L1 status-bar indicator through
+// its phases (reviewing → recording actions → done) without firing a
+// real review fork. Hidden from the slash-command catalog; meant for
+// developers checking the spinner / target / done-summary look in their
+// own terminal.
+func (c *SlashCommandController) handleSelflearnDemoCommand(_ context.Context, _ string) (string, tea.Cmd, error) {
+	if c.env.RunSelfLearnDemo == nil {
+		return "", nil, nil
+	}
+	c.env.RunSelfLearnDemo()
 	return "", nil, nil
 }
 
