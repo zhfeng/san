@@ -66,7 +66,17 @@ Read the current version and identify changes since the last tag:
    Options: [v1.19.1, v1.20.0]
    ```
 
-### 2. Update the changelog
+### 2. Verify the working tree is clean
+
+Check for uncommitted changes before touching any files:
+
+```bash
+git status --short
+```
+
+If there are any modified or untracked files (other than the version bump and changelog update this workflow will create), **stop**. Ask the user to commit or stash them first. Do not proceed until the tree is clean.
+
+### 3. Update the changelog
 
 Add a new `CHANGELOG.md` section for the target version. Keep older sections in place. The format must match:
 
@@ -129,6 +139,4 @@ Wait up to 3 minutes, checking every 15 seconds. If the release doesn't appear, 
 - Always use `git commit -s` to include the DCO sign-off.
 - Never force push to main.
 - If the version string is already set to the target version, skip the bump and warn the user.
-- If there are uncommitted changes in the working tree (other than the version bump and changelog update), stop and ask the user to commit or stash them first.
-- Prefer `make release-push VERSION=v<new_version>` over manual tag and push commands.
-- The GitHub Actions workflow handles binary builds, release creation, and current-version release notes extraction.
+- If the code version already matches the target and the CHANGELOG already contains a matching section (i.e., a prior release attempt was committed but never tagged), skip the bump and changelog steps. Proceed directly to verifying a clean tree, then commit any outstanding files, tag, and push.
