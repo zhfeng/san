@@ -13,10 +13,11 @@ UNSTAGED=$(git diff --name-only)
 CLEAN_FILES=""
 SKIPPED=""
 for f in $STAGED_GO_FILES; do
-    case "$UNSTAGED" in
-        *"$f"*) SKIPPED="$SKIPPED $f" ;;
-        *) CLEAN_FILES="$CLEAN_FILES $f" ;;
-    esac
+    if printf '%s\n' "$UNSTAGED" | grep -Fxq "$f"; then
+        SKIPPED="$SKIPPED $f"
+    else
+        CLEAN_FILES="$CLEAN_FILES $f"
+    fi
 done
 
 if [ -n "$SKIPPED" ]; then
@@ -27,6 +28,9 @@ fi
 if [ -z "$CLEAN_FILES" ]; then
     exit 0
 fi
+
+# Make sure goimports is installed (uses the version pinned in the Makefile)
+make check-format-tools
 
 # Format only the clean staged files
 echo "$CLEAN_FILES" | xargs gofmt -w
