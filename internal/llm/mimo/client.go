@@ -35,8 +35,22 @@ func NewClient(client anthropicsdk.Client, name string) *Client {
 func (c *Client) Name() string { return c.inner.Name() }
 
 // Stream delegates to the anthropic provider for full API compatibility.
+// Mimo reports all input tokens as CacheReadInputTokens; fix up InputTokens
+// so downstream consumers (logging, cost tracking) see the correct count.
 func (c *Client) Stream(ctx context.Context, opts llm.CompletionOptions) <-chan llm.StreamChunk {
-	return c.inner.Stream(ctx, opts)
+	in := c.inner.Stream(ctx, opts)
+	out := make(chan llm.StreamChunk)
+	go func() {
+		defer close(out)
+		for chunk := range in {
+			if chunk.Type == llm.ChunkTypeDone && chunk.Response != nil &&
+				chunk.Response.Usage.InputTokens == 0 && chunk.Response.Usage.CacheReadInputTokens > 0 {
+				chunk.Response.Usage.InputTokens = chunk.Response.Usage.CacheReadInputTokens
+			}
+			out <- chunk
+		}
+	}()
+	return out
 }
 
 // modelsResponse is the OpenRouter-style response from the Mimo models API.
